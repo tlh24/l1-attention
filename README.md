@@ -4,7 +4,8 @@ This is a small library that implements L1 attention via Pytorch extensions in C
 That is,
 ```math
 Attention[..,i,j] = F( \sum_k abs(Query[..,i,k] - Key[..,j,k]) ) 
-\\
+```
+```math
 F(x) = \frac{1}{0.001 + x} 
 ```
 Where the $Attention$ tensor has the leading batch and head dimensions omitted ('..') and $k$ indexes over the per-head channels.  This is pre-softmax.  
