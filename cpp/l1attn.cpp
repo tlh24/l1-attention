@@ -4,6 +4,12 @@
 
 #define DTYPE double
 
+DTYPE sign(DTYPE x)
+{ 
+	DTYPE t = x < 0 ? -1 : 0;
+	return x > 0 ? 1 : t;
+}
+
 std::vector<torch::Tensor> l1attn_forward(
     torch::Tensor q,
     torch::Tensor k) {

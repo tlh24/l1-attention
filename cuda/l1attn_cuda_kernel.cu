@@ -10,7 +10,6 @@ __device__  __forceinline__ scalar_t sign(scalar_t x)
 { 
 	scalar_t t = x < 0 ? -1 : 0;
 	return x > 0 ? 1 : t;
-
 }
 
 template <typename scalar_t>

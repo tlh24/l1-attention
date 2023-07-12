@@ -8,7 +8,7 @@ Attention[..,i,j] = F( \sum_k abs(Query[..,i,k] - Key[..,j,k]) )
 ```math
 F(x) = \frac{1}{0.001 + x} 
 ```
-Where the $Attention$ tensor has the leading batch and head dimensions omitted ('..') and $k$ indexes over the per-head channels.  This is pre-softmax.  
+Where the $Attention$ tensor has the leading batch and head dimensions omitted ('..'), $k$ indexes over the per-head channels, and F is applied per-element.  This is pre-softmax.  
 
 In comparison, the more typical dot-product attention: 
 ```math
