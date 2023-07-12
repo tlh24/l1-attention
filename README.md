@@ -1,13 +1,17 @@
 # L1 norm attention C++/CUDA Extensions for PyTorch
 
 This is a small library that implements L1 attention via Pytorch extensions in C++ and CUDA.
-That is, 
-$$ Attention[..,i,j] = F( \Sum_k abs(Query[..,i,k] - Key[..,j,k]) ) $$
-$$ F(x) = \frac{1}{0.001 + x} $$
+That is,
+```math
+Attention[..,i,j] = F( \sum_k abs(Query[..,i,k] - Key[..,j,k]) ) 
+F(x) = \frac{1}{0.001 + x} 
+```
 Where the $Attention$ tensor has the leading batch and head dimensions omitted ('..') and $k$ indexes over the per-head channels.  This is pre-softmax.  
 
 In comparison, the more typical dot-product attention: 
-$$ Attention[..,i,j] = \Sum_k (Query[..,i,k] * Key[..,j,k]) ) $$
+```math
+Attention[..,i,j] = \sum_k (Query[..,i,k] * Key[..,j,k]) ) 
+```
 roughly measures the cosine distance between vectors, because of the pre- or post- LayerNorm  (see the [Magneto paper](http://arxiv.org/abs/2210.06423) for further discussion).  (Roughly, depending on where the LayerNorm is and if there are sub-norms.)
 
 L1 attention can solve some symmetric problems that dot-product attention cannot -- see test_transformer.py for an illustration.  It may also solve some problems faster than dot-product attention; however, work is ongoing! 
