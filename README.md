@@ -51,6 +51,11 @@ k = torch.randn(2,3,4,8).cuda()
 a = m.forward(q,k)
 ```
 
+## TODO
+- Setup / DistUtils will be deprecated in python 3.12.  I'm not an expert here, so will deal with it when needed. 
+- Optimize memory access patterns
+- Pull in Value computation
+
 ## Authors
 
 [Tim Hanson](https://github.com/tlh24)
