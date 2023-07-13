@@ -16,7 +16,7 @@ Attention[..,i,j] = \sum_k (Query[..,i,k] * Key[..,j,k]) )
 ```
 roughly measures the cosine distance between vectors, because of the pre- or post- LayerNorm  (see the [Magneto paper](http://arxiv.org/abs/2210.06423) for further discussion).  (Roughly, depending on where the LayerNorm is and if there are sub-norms.)
 
-L1 attention can solve some symmetric problems that dot-product attention cannot -- see test_transformer.py for an illustration.  It may also solve some problems faster than dot-product attention; however, work is ongoing! 
+L1 attention can solve some symmetric problems that dot-product attention cannot -- see test_transformer.py for an illustration.  It may also solve some problems faster than dot-product attention; see [example](http://github.com/tlh24/l1-attention/example) 
 
 This needs to be a C++/ CUDA extension because the form of eq.1 requires the creation of a large tensor, typically sized $[batch_size, num_heads, context_size, context_size, channels], which is then summed over the last dimension.  For large models with large numbers of channels, this both exceeds GPU memory and is grossly inefficient.  
 
