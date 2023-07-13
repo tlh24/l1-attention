@@ -60,10 +60,10 @@ class ResidualAttentionBlock(nn.Module):
 
 	def forward(self, x: torch.Tensor):
 		if(self.use_l1attn):
-			x = x + self.attention_l1(self.ln_1(x)) #self.ln_1(x) 
+			x = x + self.attention_l1(x) #self.ln_1(x) 
 		else:
-			x = x + self.attention_dp(self.ln_1(x)) #self.ln_1(x) 
-		x = x + self.mlp(self.ln_2(x)) #self.ln_2(x)
+			x = x + self.attention_dp(x) #self.ln_1(x) 
+		x = x + self.mlp(x) #self.ln_2(x)
 		return x
 
 
