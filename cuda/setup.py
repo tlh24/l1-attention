@@ -3,6 +3,7 @@ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 setup(
     name='l1attn_cuda',
+    py_modules=['l1attn'],
     ext_modules=[
         CUDAExtension('l1attn_cuda', [
             'l1attn_cuda.cpp',

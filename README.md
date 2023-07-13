@@ -36,6 +36,20 @@ This will install the l1attn modules into your Conda environment.
 
 Test the install by running `python check.py` from the root directory of this repository. This will check the forward and backward passes of the L1attn modules against a naive implementation + autograd.  
 
+If all looks good, you may use the CUDA version in your project like this: 
+```
+# torch must be imported first for shared objects to be found properly
+import torch
+import l1attn
+
+m = l1attn.L1Attn()
+
+# batch_size 2, context 3, heads 4, channels 8
+q = torch.randn(2,3,4,8).cuda()
+k = torch.randn(2,3,4,8).cuda()
+
+a = m.forward(q,k)
+```
 
 ## Authors
 
