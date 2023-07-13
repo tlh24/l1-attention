@@ -9,7 +9,7 @@ With LayerNorm **off** and **two** layers, L1 attention converges faster than do
 
 ![](loss_plot_layers-2_layernorm-off.png)
 
-With LayerNorm **off** and **one** layer, L1 attention converges faster: 
+With LayerNorm **off** and **one** layer, L1 attention works, DP just barely: 
 
 ![](loss_plot_layers-1_layernorm-off.png)
 
