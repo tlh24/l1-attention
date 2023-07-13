@@ -13,7 +13,7 @@ def absum(a):
 device = torch.device("cpu")
 torch.manual_seed(int(time.time()))
 
-kwargs = {'dtype': torch.float64, # TODO: parameterize this later! 
+kwargs = {'dtype': torch.float64, 
           'device': device,
           'requires_grad': True}
           
