@@ -27,11 +27,11 @@ This library is based on the [Pytorch example](https://github.com/pytorch/extens
 
 ## Getting started
 
-You may need to install Pytorch from source within a Conda environment to get this working on your hardware; I did (RTX 4090; shader model 8.9; tested against Pytorch 2.1.0a0+gitde7b6e5).  Please refer to the pytorch [documentation](https://github.com/pytorch/pytorch#from-source).  
+First, install `python3-dev` and `nvidia-cuda-toolkit`.  As of March 2024, the module installs properly on Debian testing with pytorch 2.2.1, Cuda 12.0 -- but you need to edit one file in pybind to get it to work, see https://github.com/pybind/pybind11/issues/4606
 
-(As of June 2023, Conda ships linked against an old version of gcc -- though much prefer virtual environments, but couldn't get them to work.)
+(Conda ships linked against an old version of gcc -- could not get it to work.)
 
-(Likewise, the CUDA version shipping in Debian testing as of January 2024 (12.0) has a bug when compiled with gcc / g++ 12+ -- and g++11 is no longer in the distro tree.  I've gotten around this by installing Cuda 12.3 from the .run file)
+(Alternately, the CUDA version shipping in Debian testing as of January 2024 (12.0) has a bug when compiled with gcc / g++ 12+ -- and g++11 is no longer in the distro tree.  I've gotten around this by installing Cuda 12.3 from the .run file)
 
 Then, navigate to the `cpp/` and `cuda/` directories and run `python setup.py install` there. 
 This will install the l1attn modules into your Conda environment. 
