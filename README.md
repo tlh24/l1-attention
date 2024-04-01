@@ -31,7 +31,7 @@ You may need to install Pytorch from source within a Conda environment to get th
 
 (As of June 2023, Conda ships linked against an old version of gcc -- though much prefer virtual environments, but couldn't get them to work.)
 
-(Likewise, the CUDA version shipping in Debian testing as of January 2024 (12.0) has a bug when compiled with gcc / g++ 12+ -- and g++11 is no longer in the distro tree.  I've gotten around this by installing Cuda 12.3 from the .run file)
+(Likewise, the CUDA version shipping in Debian testing as of January 2024 (12.0) has a bug when compiled with gcc / g++ 12+ -- and g++11 is no longer in the distro tree.  I've gotten around this by installing Cuda 12.3 from the .run file w/ gcc-12.  See [bug](https://github.com/pybind/pybind11/issues/4606) )
 
 Then, navigate to the `cpp/` and `cuda/` directories and run `python setup.py install` there. 
 This will install the l1attn modules into your Conda environment. 
