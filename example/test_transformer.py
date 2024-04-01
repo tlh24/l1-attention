@@ -8,13 +8,14 @@ from model import Recognizer
 import pdb
 
 batch_size = 256
-n_ctx = 16 # number of tokens. determines the problem size. 
+n_ctx = 32 # number of tokens. determines the problem size. 
 n_symb = 10 # dimension of the tokens
 n_layers = 2
-n_heads = 4
+n_heads = 2
+embed_dim = 64
 n_test = 5  # how many replicate training runs
 n_iters = 10000
-learning_rate = 5e-4
+learning_rate = 5e-4 # empirical
 clip_grad = 0.1
 
 doplot = False
@@ -89,7 +90,7 @@ def train_model(use_l1attn):
 							n_layers = n_layers, 
 							n_heads = n_heads, 
 							indim = n_symb+4,
-							embed_dim = 64, 
+							embed_dim = embed_dim, 
 							use_l1attn = use_l1attn)
 
 		lossfunc_mse = nn.MSELoss(reduction='mean')
@@ -112,7 +113,7 @@ def train_model(use_l1attn):
 			torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
 			optimizer.step() 
 			lossflat.detach()
-			slowloss = 0.99*slowloss + 0.01 * lossflat.item()
+			slowloss = 0.96*slowloss + 0.04 * lossflat.item()
 			plotloss[j,i] = slowloss
 			# print(slowloss)
 			

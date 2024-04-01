@@ -33,14 +33,18 @@ __global__ void l1attn_cuda_forward_kernel(
   int indx = threadIdx.y + blockIdx.x * 8; // is this right?
   
   if(indx < bs*n_heads*n_ctx*n_ctx){
-    // output indexing: gather (scatter might be more efficient..)
+    // we can permute the order of the output indexing here to improve
+    // memory gather coherency.  
+    // but, because each warp can only write one mem loc, 
+    // it's still a gather operation.
+    // empirical notes: permuting the indexing order did not change speed! 
     int j = indx; 
+    int h = j % n_heads; 
+    j /= n_heads; 
     int t = j % n_ctx; 
     j /= n_ctx; 
     int s = j % n_ctx; 
     j /= n_ctx; 
-    int h = j % n_heads; 
-    j /= n_heads; 
     int b = j; 
   
     int width32 = (width + 31) / 32; 
@@ -97,6 +101,7 @@ __global__ void l1attn_cuda_backward_kernel_dr(
     
     scalar_t f = c[b][h][s][t]; 
     // another transpose here .. why???
+    // (at least it makes reads coherent..)
     d_r[b][h][t][s] = (-1.0 / ((0.001 + f)*(0.001 + f)))
                        * d_attn[b][h][s][t];
     // d_r[b][h][t][s] = f * d_attn[b][h][s][t]; 
@@ -131,6 +136,7 @@ __global__ void l1attn_cuda_backward_kernel(
   
   if(indx < bs*n_ctx*n_heads*width){
     // again, output indexing b/c thread blocks can't overlap writes.
+    // see note in forward kernel.
     int j = indx; 
     int w = j % width; 
     j /= width; 

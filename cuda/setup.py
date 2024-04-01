@@ -26,3 +26,5 @@ setup(
  # might be worth adding more flags, e.g. ptxas options
  # https://github.com/facebookresearch/xformers/blob/main/setup.py
  # is a suitable refrence. 
+ 
+ # note: latest Debian gcc is v 13; does not work with nvcc from CUDA 12.1
