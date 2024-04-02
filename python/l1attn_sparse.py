@@ -85,7 +85,8 @@ if __name__ == "__main__":
 	v[:,2,:,2] = -0.5
 	
 	m = L1AttnSparse()
-	vv = m(q, k, v, torch.tensor([0,1]), torch.tensor([0,1]))
+	coo = torch.zeros(
+	vv = m(q, k, v, )
 	print('q', torch.squeeze(q))
 	print('k', torch.squeeze(k))
 	print('v', torch.squeeze(v))
