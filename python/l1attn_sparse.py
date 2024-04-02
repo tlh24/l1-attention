@@ -1,8 +1,8 @@
 import math
 import torch
 import torch.nn.functional as F
-import pdb
-
+# import pdb
+import l1attn
 
 
 class L1AttnSparse(torch.nn.Module):
@@ -10,7 +10,7 @@ class L1AttnSparse(torch.nn.Module):
 		super(L1AttnSparse, self).__init__()
 		# there are no parameters, deterministic mapping
 
-	def forward(self, q, k, v, coo, sm_cnt_max):
+	def forward(self, q, k, v, coo, coo_cnt_max):
 		'''
 		q, k, v are the usual dense tensors 
 			shape [batch_size, n_tok, n_heads, width]
@@ -23,27 +23,65 @@ class L1AttnSparse(torch.nn.Module):
 				that is, for each dst it compresses/indexes src to be non-sparse.
 				(otherwise we need to allocate a full softmax matrix)
 		dst and src are in [0 .. n_tok)
-		sm_cnt is in [0 .. sm_cnt_max)
+		sm_cnt is in [0 .. coo_cnt_max)
 		'''
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0] # tempted to name it cool (coo_length)
 		qq = q.permute(0, 2, 1, 3) # batch, heads, n_ctx, width
 		kk = k.permute(0, 2, 1, 3) 
 		vv = v.permute(0, 2, 1, 3) 
-		
-		qq = qq[:,:,coo[:,0],:] # this should broadcast properly? 
+
+		qq = qq[:,:,coo[:,0],:] # this should broadcast properly.
 		kk = kk[:,:,coo[:,1],:]
-		scale = 1 / math.sqrt(sm_cnt_max) # ???
+		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
-		attn = torch.zeros(bs, n_heads, n_tok, sm_cnt_max, device=q.device)
+		attn = torch.ones(bs, n_heads, n_tok, coo_cnt_max+1, device=q.device)*-1e32 # -infty
 		attn[:,:,coo[:,0], coo[:,2]] = ww[:,:,0:cl] # scatter op
 		attn_sm = F.softmax(attn, -1)
-		vv[:,:,coo[:,0],coo[:,2],:] = vv[:,:,0:cl,:]
-		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vv)
-		vout = torch.zeros_like(v)
-		vout[:,coo[:,0],:,:] = vout[:,coo[:,0],:,:]
-		
-		return vout
+		vw = torch.zeros(bs, n_heads, n_tok, coo_cnt_max+1, width, device=q.device)
+		vw[:,:,coo[:,0],coo[:,2],:] = vv[:,:,coo[:,1],:]
+		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vw) # sum over src
+		return vo
+
+def expandCoo(co):
+	'''
+	take a coordinate vector 'co'
+	consisting of [dst,src] pairs
+	and add a third dimension for the softmax
+	over source, per dest.
+	'''
+	coo = torch.zeros((co.shape[0], 3), dtype=torch.int32, device=co.device)
+	cntr = {}
+	coo_cnt_max = 0
+	dst_max = 0
+	for i in range(co.shape[0]):
+		dst = co[i,0].item()
+		src = co[i,1].item()
+		if dst in cntr:
+			cntr[dst] = cntr[dst] + 1
+		else:
+			cntr[dst] = 0
+		coo[i,0] = dst
+		coo[i,1] = src
+		coo[i,2] = cntr[dst]
+		coo_cnt_max = max(coo_cnt_max, cntr[dst])
+		dst_max = max(dst_max, dst)
+	# go back and make sure all destinations are written -
+	# that is, all destinations have at least one source.
+	for i in range(dst_max):
+		if i not in cntr:
+			print(f'degenerate sparse head - {i} not written')
+	return coo, coo_cnt_max
+
+def testL1AttnSparse(q, k, v, co):
+	coo, coo_cnt_max = expandCoo(co)
+	m = L1AttnSparse()
+	vout = m(q, k, v, coo, coo_cnt_max)
+	print('q', torch.squeeze(q))
+	print('k', torch.squeeze(k))
+	print('v', torch.squeeze(v))
+	print('coo', coo)
+	print('vout', torch.squeeze(vout))
 
 if __name__ == "__main__":
 	batch_size = 1
@@ -74,19 +112,27 @@ if __name__ == "__main__":
 	k[:,2,:,2] = 2
 	
 	v = torch.zeros(batch_size, n_ctx, n_heads, width)
-	v[:,0,:,0] = -0.5
-	v[:,0,:,1] = 0.5
-	v[:,0,:,2] = 1
-	v[:,1,:,0] = 0.5
-	v[:,1,:,1] = -0.5
-	v[:,1,:,2] = 0.5
-	v[:,2,:,0] = 1
-	v[:,2,:,1] = 0.5
-	v[:,2,:,2] = -0.5
-	
-	m = L1AttnSparse()
-	vv = m(q, k, v, torch.tensor([0,1]), torch.tensor([0,1]))
-	print('q', torch.squeeze(q))
-	print('k', torch.squeeze(k))
-	print('v', torch.squeeze(v))
-	print('vout', torch.squeeze(vv))
+	v[:,0,:,0] = -2
+	v[:,0,:,1] = 2
+	v[:,0,:,2] = 3
+	v[:,1,:,0] = 2
+	v[:,1,:,1] = -2
+	v[:,1,:,2] = 2
+	v[:,2,:,0] = 3
+	v[:,2,:,1] = 2
+	v[:,2,:,2] = -2
+
+	co = torch.tensor([[0,0],[0,1],[1,0],[1,1],[2,2]])
+
+	testL1AttnSparse(q, k, v, co)
+
+	# try full non-sparse attention
+	co = torch.tensor([[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]])
+	testL1AttnSparse(q, k, v, co)
+	# compare it with non-sparse L1 attention.
+	m = l1attn.L1Attn()
+	a = m.forward(q, k)
+	a_sm = F.softmax(a, -2)
+	vo = torch.einsum('bhsd, bshw -> bhdw', a_sm, v)
+	print('full / default attn')
+	print('vout', vo)
