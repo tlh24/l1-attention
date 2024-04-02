@@ -22,7 +22,7 @@ class L1Attn(torch.nn.Module):
 		m = l1attn.L1Attn()
 		a = m.forward(q, k)
 		a_sm = F.softmax(a, -2)
-		vo = torch.einsum('bhsd, bshw -> bhdw', a_sm, v)
+		vo = torch.einsum('bhsd, bshw -> bdhw', a_sm, v)
 		'''
 
 		return attn

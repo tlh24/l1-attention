@@ -1,7 +1,7 @@
 import math
 import torch
 import torch.nn.functional as F
-# import pdb
+import pdb
 import l1attn
 
 
@@ -41,7 +41,9 @@ class L1AttnSparse(torch.nn.Module):
 		vw = torch.zeros(bs, n_heads, n_tok, coo_cnt_max+1, width, device=q.device)
 		vw[:,:,coo[:,0],coo[:,2],:] = vv[:,:,coo[:,1],:]
 		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vw) # sum over src
-		return vo
+		vout = torch.zeros_like(v)
+		vout[:,coo[:,0],:,:] = vo[:,coo[:,0],:,:]
+		return vout
 
 def expandCoo(co):
 	'''
@@ -82,6 +84,7 @@ def testL1AttnSparse(q, k, v, co):
 	print('v', torch.squeeze(v))
 	print('coo', coo)
 	print('vout', torch.squeeze(vout))
+	return vout
 
 if __name__ == "__main__":
 	batch_size = 1
@@ -128,11 +131,21 @@ if __name__ == "__main__":
 
 	# try full non-sparse attention
 	co = torch.tensor([[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]])
-	testL1AttnSparse(q, k, v, co)
+	vs = testL1AttnSparse(q, k, v, co)
 	# compare it with non-sparse L1 attention.
 	m = l1attn.L1Attn()
 	a = m.forward(q, k)
 	a_sm = F.softmax(a, -2)
-	vo = torch.einsum('bhsd, bshw -> bhdw', a_sm, v)
+	vf = torch.einsum('bhsd, bshw -> bdhw', a_sm, v)
 	print('full / default attn')
-	print('vout', vo)
+	print('vout', vf)
+	print('diff', vs-vf)
+	assert torch.allclose(vs, vf)
+
+	# same thing, but permute the coo vector
+	indx = torch.randperm(co.shape[0])
+	co = co[indx, :]
+	vs = testL1AttnSparse(q, k, v, co)
+	assert torch.allclose(vs, vf)
+
+	print('assertions passed')
