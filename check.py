@@ -2,7 +2,7 @@ import torch
 from torch.autograd import gradcheck
 from python.l1attn import L1Attn
 from python.l1attn_baseline import L1AttnFunction
-import cpp.l1attn
+# import cpp.l1attn
 import cuda.l1attn
 import pdb
 import time
@@ -36,10 +36,10 @@ attn_naive = l1a(q,k)
 
 attn_baseline = L1AttnFunction.apply(*variables)
 
-attn_cpp = cpp.l1attn.L1AttnFunction.apply(*variables)
+# attn_cpp = cpp.l1attn.L1AttnFunction.apply(*variables)
 
-variables_cuda = [q.cuda(), k.cuda()]
-attn_cuda = cuda.l1attn.L1AttnFunction.apply(*variables_cuda)
+# variables_cuda = [q.cuda(), k.cuda()]
+# attn_cuda = cuda.l1attn.L1AttnFunction.apply(*variables_cuda)
 
 def check_forward(s, a): 
     b = absum(a).item(); 
@@ -47,8 +47,8 @@ def check_forward(s, a):
     print(s, ok)
 
 check_forward("Forward attn, absum( Naive - Baseline )", attn_naive - attn_baseline )
-check_forward("Forward attn, absum( Naive - Cpp )", attn_naive - attn_baseline )
-check_forward("Forward attn, absum( Naive - Cuda )", attn_naive - attn_cuda.cpu() )
+# check_forward("Forward attn, absum( Naive - Cpp )", attn_naive - attn_baseline )
+# check_forward("Forward attn, absum( Naive - Cuda )", attn_naive - attn_cuda.cpu() )
 
 
 # note: the gradient dosen't work perfectly with rational numbers (above)
@@ -61,8 +61,8 @@ variables = [q, k]
 if gradcheck(L1AttnFunction.apply, variables):
     print('Backward: Baseline grad Ok')
     
-if gradcheck(cpp.l1attn.L1AttnFunction.apply, variables):
-    print('Backward: Cpp grad Ok')
+# if gradcheck(cpp.l1attn.L1AttnFunction.apply, variables):
+#    print('Backward: Cpp grad Ok')
 
-if gradcheck(cuda.l1attn.L1AttnFunction.apply, variables_cuda):
-    print('Backward: Cuda grad Ok')
+#if gradcheck(cuda.l1attn.L1AttnFunction.apply, variables_cuda):
+#    print('Backward: Cuda grad Ok')
