@@ -18,9 +18,9 @@ kwargs = {'dtype': torch.float64,
           'requires_grad': True}
           
 batch_size = 2
-n_heads = 4
-n_ctx = 16
-width = 16
+n_heads = 3
+n_ctx = 4
+width = 5
 
 # CUDA implemetation of IEEE-754 is not *exactly* like Intel / AMD's
 # but, if we restrict to multiples of 1/128, everything matches bit-perfectly. 
