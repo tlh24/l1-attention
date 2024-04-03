@@ -45,6 +45,89 @@ class L1AttnSparse(torch.nn.Module):
 		vout[:,coo[:,0],:,:] = vo[:,coo[:,0],:,:]
 		return vout
 
+class L1AttnFunction(Function):
+	@staticmethod
+	def forward(ctx, q, k, v, coo, coo_cnt_max):
+		'''
+		q, k, v are the usual dense tensors
+			shape [batch_size, n_tok, n_heads, width]
+			for Query, Key, and Value respectively.
+		coo is a vector size [cl,3]
+			with elements coo[i,:] = [dst,src,sm_cnt]
+			where dst indexes q
+			and src indexes k,v
+			and sm_cnt indexes softmax
+				that is, for each dst it compresses/indexes src to be non-sparse.
+				(otherwise we need to allocate a full softmax matrix)
+		dst and src are in [0 .. n_tok)
+		sm_cnt is in [0 .. coo_cnt_max)
+		'''
+		bs, n_tok, n_heads, width = q.shape
+		cl = coo.shape[0] # tempted to name it cool (coo_length)
+
+		qq = q[:,coo[:,0],:,:] # this should broadcast properly.
+		kk = k[:,coo[:,1],:,:]
+		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
+		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
+		attn = torch.ones((bs, n_tok, coo_cnt_max+1, n_heads),\
+			device=q.device)*-1e32 # -infty
+		attn[:,coo[:,0],coo[:,2],:] = ww[:,0:cl,:] # scatter op
+		attn_sm = F.softmax(attn, 2)
+		vw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width),\
+			device=q.device)
+		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
+		vo = torch.einsum("bdsh, bdshw -> bdhw", attn_sm, vw) # sum over src
+		# dest must be full -- all locations written!
+
+		ctx.save_for_backward(q, k, v, attn_sm, coo, coo_cnt_max)
+
+		return vo
+
+	@staticmethod
+	def backward(ctx, dvo):
+		q,k,v,attn_sm,coo,coo_cnt_max = ctx.saved_tensors[:5]
+		bs, n_tok, n_heads, width = q.shape
+		cl = coo.shape[0]
+
+		# scatter vo back to vw, calc dv
+		dvw = torch.zeros((bs, n_tok, coo_cnt_max, n_heads, width), \
+			device=q.device)
+		dvw[:,coo[:,0],coo[:,2],:,:] = dvo[:,coo[:,1],:,:]
+		dv = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, dvw)
+
+		# calculate derivative wrt softmax
+		vw = torch.zeros((bs, n_tok, coo_cnt_max, n_heads, width), \
+			device=q.device)
+		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
+		dattn_sm = vw * dvw # expansion / redundant..
+
+		# calculate the jacobian of the softmax
+		j = -1*torch.einsum("bdrh, bdqh -> bdrqh", attn_sm, attn_sm)
+		# diagonal elements
+		j[:,:,coo[:,1],coo[:,1],:] = \
+			attn_sm[:,:,coo[:,1],:] * (1-attn_sm[:,:,coo[:,1],:])
+		dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
+
+		# now for q
+		qq = q[:,coo[:,0],:,:] # bdhw
+		kk = k[:,coo[:,1],:,:]
+		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
+		ws = torch.sign(qq - kk)*scale
+		wss[:,coo[:,0],coo[:,2],:,:] = ws[:,coo[:,1],:,:]
+		dq = torch.einsum("bdrhw, bdrh -> bdhw", wss, dattn)
+		dk = torch.einsum("bdrhw, bdrh -> bdhw", wss, dattn)
+
+
+		# calculate the sparse jacobian
+		# attn_sm is shape [bs,
+		d_attn = torch.zeros_like(attn_sm)
+		doutp = dout[
+
+		qq = q[:,coo[:,0],:,:] # this should broadcast properly.
+		kk = k[:,coo[:,1],:,:]
+		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
+		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
+
 def expandCoo(co):
 	'''
 	take a coordinate vector 'co'
