@@ -1,9 +1,9 @@
 import math
 import torch
 import torch.nn.functional as F
-import pdb
+from torch.autograd import Function
 import l1attn
-
+import pdb
 
 class L1AttnSparse(torch.nn.Module):
 	def __init__(self):
@@ -35,17 +35,17 @@ class L1AttnSparse(torch.nn.Module):
 		kk = kk[:,:,coo[:,1],:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
-		attn = torch.ones(bs, n_heads, n_tok, coo_cnt_max+1, device=q.device)*-1e32 # -infty
+		attn = torch.ones(bs, n_heads, n_tok, coo_cnt_max+1, device=q.device, dtype=q.dtype)*-1e32 # -infty
 		attn[:,:,coo[:,0], coo[:,2]] = ww[:,:,0:cl] # scatter op
 		attn_sm = F.softmax(attn, -1)
-		vw = torch.zeros(bs, n_heads, n_tok, coo_cnt_max+1, width, device=q.device)
+		vw = torch.zeros(bs, n_heads, n_tok, coo_cnt_max+1, width, device=q.device, dtype=q.dtype)
 		vw[:,:,coo[:,0],coo[:,2],:] = vv[:,:,coo[:,1],:]
 		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vw) # sum over src
 		vout = torch.zeros_like(v)
 		vout[:,coo[:,0],:,:] = vo[:,coo[:,0],:,:]
 		return vout
 
-class L1AttnFunction(Function):
+class L1AttnSparseFn(Function):
 	@staticmethod
 	def forward(ctx, q, k, v, coo, coo_cnt_max):
 		'''
@@ -70,42 +70,44 @@ class L1AttnFunction(Function):
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
 		attn = torch.ones((bs, n_tok, coo_cnt_max+1, n_heads),\
-			device=q.device)*-1e32 # -infty
+			device=q.device, dtype=q.dtype)*-1e32 # -infty
 		attn[:,coo[:,0],coo[:,2],:] = ww[:,0:cl,:] # scatter op
 		attn_sm = F.softmax(attn, 2)
 		vw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width),\
-			device=q.device)
+			device=q.device, dtype=q.dtype) # uff, large matrix
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
-		vo = torch.einsum("bdsh, bdshw -> bdhw", attn_sm, vw) # sum over src
+		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, vw) # sum over src
 		# dest must be full -- all locations written!
 
-		ctx.save_for_backward(q, k, v, attn_sm, coo, coo_cnt_max)
+		ctx.save_for_backward(q, k, v, attn_sm, coo, torch.tensor(coo_cnt_max))
 
 		return vo
 
 	@staticmethod
 	def backward(ctx, dvo):
-		q,k,v,attn_sm,coo,coo_cnt_max = ctx.saved_tensors[:5]
+		q,k,v,attn_sm,coo,coo_cnt_max = ctx.saved_tensors[:6]
+		coo_cnt_max = coo_cnt_max.item()
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0]
 
 		# scatter vo back to vw, calc dv
-		dvw = torch.zeros((bs, n_tok, coo_cnt_max, n_heads, width), \
-			device=q.device)
+		dvw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width), \
+			device=q.device, dtype=q.dtype)
 		dvw[:,coo[:,0],coo[:,2],:,:] = dvo[:,coo[:,1],:,:]
 		dv = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, dvw)
 
 		# calculate derivative wrt softmax
-		vw = torch.zeros((bs, n_tok, coo_cnt_max, n_heads, width), \
-			device=q.device)
+		vw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width), \
+			device=q.device, dtype=q.dtype)
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
-		dattn_sm = vw * dvw # expansion / redundant..
+		dattn_sm = torch.einsum("bdrhw, bdrhw -> bdrh ", vw, dvw)
 
 		# calculate the jacobian of the softmax
 		j = -1*torch.einsum("bdrh, bdqh -> bdrqh", attn_sm, attn_sm)
 		# diagonal elements
 		j[:,:,coo[:,1],coo[:,1],:] = \
 			attn_sm[:,:,coo[:,1],:] * (1-attn_sm[:,:,coo[:,1],:])
+		# note: jacobian is symmetric, so this might be transposed
 		dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
 
 		# now for q
@@ -113,20 +115,13 @@ class L1AttnFunction(Function):
 		kk = k[:,coo[:,1],:,:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ws = torch.sign(qq - kk)*scale
+		wss = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width), \
+			device=q.device, dtype=q.dtype)
 		wss[:,coo[:,0],coo[:,2],:,:] = ws[:,coo[:,1],:,:]
 		dq = torch.einsum("bdrhw, bdrh -> bdhw", wss, dattn)
-		dk = torch.einsum("bdrhw, bdrh -> bdhw", wss, dattn)
+		dk = torch.einsum("bdrhw, bdrh -> bdhw", wss, -1*dattn)
 
-
-		# calculate the sparse jacobian
-		# attn_sm is shape [bs,
-		d_attn = torch.zeros_like(attn_sm)
-		doutp = dout[
-
-		qq = q[:,coo[:,0],:,:] # this should broadcast properly.
-		kk = k[:,coo[:,1],:,:]
-		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
-		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
+		return dq, dk, dv, None, None
 
 def expandCoo(co):
 	'''
@@ -230,5 +225,5 @@ if __name__ == "__main__":
 	co = co[indx, :]
 	vs = testL1AttnSparse(q, k, v, co)
 	assert torch.allclose(vs, vf)
-
+	
 	print('assertions passed')
