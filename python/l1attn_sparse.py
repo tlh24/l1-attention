@@ -10,20 +10,22 @@ class L1AttnSparse(torch.nn.Module):
 		super(L1AttnSparse, self).__init__()
 		# there are no parameters, deterministic mapping
 
-	def forward(self, q, k, v, coo, coo_cnt_max):
+	def forward(self, v, q, k, coo, dst_mxlen, src_mxlen):
 		'''
 		q, k, v are the usual dense tensors 
 			shape [batch_size, n_tok, n_heads, width]
 			for Query, Key, and Value respectively. 
 		coo is a vector size [cl,3]
-			with elements coo[i,:] = [dst,src,sm_cnt]
-			where dst indexes q
-			and src indexes k,v
-			and sm_cnt indexes softmax
+			with elements coo[i,:] = [dst,src,sm_cnt] where
+			dst indexes q
+			src indexes k,v
+			dst_cnt indexes softmax
 				that is, for each dst it compresses/indexes src to be non-sparse.
 				(otherwise we need to allocate a full softmax matrix)
+			src_cnt index the gather for the backward pass.
 		dst and src are in [0 .. n_tok)
-		sm_cnt is in [0 .. coo_cnt_max)
+		dst_cnt is in [0 .. dst_mxlen)
+		src_cnt is in [0 .. src_mxlen)
 		'''
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0] # tempted to name it cool (coo_length)
@@ -35,19 +37,19 @@ class L1AttnSparse(torch.nn.Module):
 		kk = kk[:,:,coo[:,1],:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
-		attn = torch.ones(bs, n_heads, n_tok, coo_cnt_max+1, device=q.device, dtype=q.dtype)*-1e32 # -infty
+		attn = torch.ones(bs, n_heads, n_tok, dst_mxlen+1, device=q.device, dtype=q.dtype)*-1e32 # -infty
 		attn[:,:,coo[:,0], coo[:,2]] = ww[:,:,0:cl] # scatter op
 		attn_sm = F.softmax(attn, -1)
-		vw = torch.zeros(bs, n_heads, n_tok, coo_cnt_max+1, width, device=q.device, dtype=q.dtype)
+		vw = torch.zeros(bs, n_heads, n_tok, dst_mxlen+1, width, device=q.device, dtype=q.dtype)
 		vw[:,:,coo[:,0],coo[:,2],:] = vv[:,:,coo[:,1],:]
 		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vw) # sum over src
-		vout = torch.zeros_like(v)
-		vout[:,coo[:,0],:,:] = vo[:,coo[:,0],:,:]
-		return vout
+		# vout = torch.zeros_like(v)
+		# vout[:,coo[:,0],:,:] = vo[:,coo[:,0],:,:]
+		return vo
 
 class L1AttnSparseFn(Function):
 	@staticmethod
-	def forward(ctx, q, k, v, coo, coo_cnt_max):
+	def forward(ctx, v, q, k, coo, dst_mxlen, src_mxlen):
 		'''
 		q, k, v are the usual dense tensors
 			shape [batch_size, n_tok, n_heads, width]
@@ -69,35 +71,38 @@ class L1AttnSparseFn(Function):
 		kk = k[:,coo[:,1],:,:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
-		attn = torch.ones((bs, n_tok, coo_cnt_max+1, n_heads),\
-			device=q.device, dtype=q.dtype)*-1e32 # -infty
+		attn = torch.ones((bs, n_tok, dst_mxlen+1, n_heads),\
+			device=q.device, dtype=q.dtype)*-1e12 # -infty
 		attn[:,coo[:,0],coo[:,2],:] = ww[:,0:cl,:] # scatter op
 		attn_sm = F.softmax(attn, 2)
-		vw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width),\
+		vw = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width),\
 			device=q.device, dtype=q.dtype) # uff, large matrix
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
 		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, vw) # sum over src
 		# dest must be full -- all locations written!
 
-		ctx.save_for_backward(q, k, v, attn_sm, coo, torch.tensor(coo_cnt_max))
+		ctx.save_for_backward(v, q, k, attn_sm, coo, torch.tensor(dst_mxlen), torch.tensor(src_mxlen))
 
 		return vo
 
 	@staticmethod
 	def backward(ctx, dvo):
-		q,k,v,attn_sm,coo,coo_cnt_max = ctx.saved_tensors[:6]
-		coo_cnt_max = coo_cnt_max.item()
+		v,q,k,attn_sm,coo,dst_mxlen,src_mxlen = ctx.saved_tensors[:7]
+		dst_mxlen = dst_mxlen.item()
+		src_mxlen = src_mxlen.item()
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0]
 
-		# scatter vo back to vw, calc dv
-		dvw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width), \
+		# scale dvo by attn matrix
+		dvw = torch.einsum("bdrh, bdhw -> bdrhw", attn_sm, dvo)
+		# gather and sum
+		dvp = torch.zeros((bs, n_tok, src_mxlen+1, n_heads, width), \
 			device=q.device, dtype=q.dtype)
-		dvw[:,coo[:,0],coo[:,2],:,:] = dvo[:,coo[:,1],:,:]
-		dv = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, dvw)
+		dvp[:,coo[:,1],coo[:,3],:] = dvw[:,coo[:,0],coo[:,2],:]
+		dv = torch.sum(dvp, 2)
 
 		# calculate derivative wrt softmax
-		vw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width), \
+		vw = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width), \
 			device=q.device, dtype=q.dtype)
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
 		dattn_sm = torch.einsum("bdrhw, bdrhw -> bdrh ", vw, dvw)
@@ -115,48 +120,79 @@ class L1AttnSparseFn(Function):
 		kk = k[:,coo[:,1],:,:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ws = torch.sign(qq - kk)*scale
-		wss = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width), \
+		wss = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width), \
 			device=q.device, dtype=q.dtype)
 		wss[:,coo[:,0],coo[:,2],:,:] = ws[:,coo[:,1],:,:]
 		dq = torch.einsum("bdrhw, bdrh -> bdhw", wss, dattn)
 		dk = torch.einsum("bdrhw, bdrh -> bdhw", wss, -1*dattn)
 
-		return dq, dk, dv, None, None
+		return dv, dq, dk, None, None, None
+
+class LinFun(Function):
+	# make sure I understand the dumb simple case.
+	@staticmethod
+	def forward(ctx, x, w):
+		y = torch.einsum("brc, br -> bc", w, x)
+		ctx.save_for_backward(x, w)
+		return y
+
+	@staticmethod
+	def backward(ctx, dy):
+		x,w = ctx.saved_tensors[:2]
+		dx = torch.einsum("brc, bc -> br", w, dy)
+		dw = torch.einsum("bc, br -> brc", dy, x)
+		return dx, dw
 
 def expandCoo(co):
 	'''
 	take a coordinate vector 'co'
 	consisting of [dst,src] pairs
-	and add a third dimension for the softmax
-	over source, per dest.
+	- add a third dimension for the softmax
+		over source, per dest.
+	- add a fourth dimension for the backward pass
+		over dest, per source
 	'''
-	coo = torch.zeros((co.shape[0], 3), dtype=torch.int32, device=co.device)
-	cntr = {}
-	coo_cnt_max = 0
+	coo = torch.zeros((co.shape[0], 4), dtype=torch.int32, device=co.device)
+	dst_cntr = {}
+	src_cntr = {}
+	dst_mxlen = 0
+	src_mxlen = 0
 	dst_max = 0
+	src_max = 0
 	for i in range(co.shape[0]):
 		dst = co[i,0].item()
 		src = co[i,1].item()
-		if dst in cntr:
-			cntr[dst] = cntr[dst] + 1
+		if dst in dst_cntr:
+			dst_cntr[dst] = dst_cntr[dst] + 1
 		else:
-			cntr[dst] = 0
+			dst_cntr[dst] = 0
+		if src in src_cntr:
+			src_cntr[src] = src_cntr[src] + 1
+		else:
+			src_cntr[src] = 0
 		coo[i,0] = dst
 		coo[i,1] = src
-		coo[i,2] = cntr[dst]
-		coo_cnt_max = max(coo_cnt_max, cntr[dst])
+		coo[i,2] = dst_cntr[dst]
+		coo[i,3] = src_cntr[src]
+		dst_mxlen = max(dst_mxlen, dst_cntr[dst])
+		src_mxlen = max(src_mxlen, src_cntr[src])
 		dst_max = max(dst_max, dst)
+		src_max = max(src_max, dst)
 	# go back and make sure all destinations are written -
 	# that is, all destinations have at least one source.
 	for i in range(dst_max):
-		if i not in cntr:
+		if i not in dst_cntr:
 			print(f'degenerate sparse head - {i} not written')
-	return coo, coo_cnt_max
+	for i in range(src_max):
+		if i not in src_cntr:
+			print(f'degenerate sparse head - {i} not read')
+	print('coo', coo)
+	return coo, dst_mxlen, src_mxlen
 
 def testL1AttnSparse(q, k, v, co):
-	coo, coo_cnt_max = expandCoo(co)
+	coo, dst_mxlen, src_mxlen = expandCoo(co)
 	m = L1AttnSparse()
-	vout = m(q, k, v, coo, coo_cnt_max)
+	vout = m(v, q, k, coo, dst_mxlen, src_mxlen)
 	print('q', torch.squeeze(q))
 	print('k', torch.squeeze(k))
 	print('v', torch.squeeze(v))
