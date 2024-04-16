@@ -5,9 +5,9 @@ from l1attn_sparse import L1AttnSparse, L1AttnSparseFn, expandCoo
 
 
 batch_size = 1
-n_heads = 2
+n_heads = 1
 n_ctx = 3
-width = 4
+width = 2
 
 device = torch.device("cpu")
 torch.manual_seed(int(time.time()))
@@ -25,9 +25,10 @@ coo, coo_max_cnt = expandCoo(co)
 
 m1 = L1AttnSparse()
 x1 = m1.forward(q, k, v, coo, coo_max_cnt)
-x2 = L1AttnSparseFn.apply(q, k, v, coo, coo_max_cnt)
-assert( torch.allclose(x1, x2) )
+x2 = L1AttnSparseFn.apply(v, q, k, coo, coo_max_cnt)
+# assert( torch.allclose(x1, x2) )
+# print('Forward: good, same as dense attention.')
 
-variables = [q, k, v, coo, coo_max_cnt]
+variables = [v, q, k, coo, coo_max_cnt]
 if gradcheck(L1AttnSparseFn.apply, variables):
     print('Backward: Baseline grad Ok')

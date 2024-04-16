@@ -35,19 +35,20 @@ class L1AttnSparse(torch.nn.Module):
 		kk = kk[:,:,coo[:,1],:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
-		attn = torch.ones(bs, n_heads, n_tok, coo_cnt_max+1, device=q.device, dtype=q.dtype)*-1e32 # -infty
+		print('ww', ww)
+		attn = torch.ones(bs, n_heads, n_tok, coo_cnt_max+1, device=q.device, dtype=q.dtype)*-1e12 # -infty
 		attn[:,:,coo[:,0], coo[:,2]] = ww[:,:,0:cl] # scatter op
 		attn_sm = F.softmax(attn, -1)
 		vw = torch.zeros(bs, n_heads, n_tok, coo_cnt_max+1, width, device=q.device, dtype=q.dtype)
 		vw[:,:,coo[:,0],coo[:,2],:] = vv[:,:,coo[:,1],:]
-		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vw) # sum over src
-		vout = torch.zeros_like(v)
-		vout[:,coo[:,0],:,:] = vo[:,coo[:,0],:,:]
-		return vout
+		vo = torch.einsum("bhds, bhdsw -> bdhw", attn, vw) # FIXME
+		# vout = torch.zeros_like(v)
+		# vout[:,coo[:,0],:,:] = vo[:,coo[:,0],:,:]
+		return vo
 
 class L1AttnSparseFn(Function):
 	@staticmethod
-	def forward(ctx, q, k, v, coo, coo_cnt_max):
+	def forward(ctx, v, q, k, coo, coo_cnt_max):
 		'''
 		q, k, v are the usual dense tensors
 			shape [batch_size, n_tok, n_heads, width]
@@ -68,33 +69,34 @@ class L1AttnSparseFn(Function):
 		qq = q[:,coo[:,0],:,:] # this should broadcast properly.
 		kk = k[:,coo[:,1],:,:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
-		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
+		ww = torch.sum(torch.abs(qq - kk), -1)*scale
 		attn = torch.ones((bs, n_tok, coo_cnt_max+1, n_heads),\
-			device=q.device, dtype=q.dtype)*-1e32 # -infty
+			device=q.device, dtype=q.dtype)*-1e10 # -infty
 		attn[:,coo[:,0],coo[:,2],:] = ww[:,0:cl,:] # scatter op
 		attn_sm = F.softmax(attn, 2)
 		vw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width),\
 			device=q.device, dtype=q.dtype) # uff, large matrix
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
-		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, vw) # sum over src
-		# dest must be full -- all locations written!
+		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn, vw) # FIXME attn_sm
+		# should work even if not all output locations are written 
+		# (default to zero)
 
-		ctx.save_for_backward(q, k, v, attn_sm, coo, torch.tensor(coo_cnt_max))
+		ctx.save_for_backward(v, q, k, attn, coo, torch.tensor(coo_cnt_max)) # FIXME attn_sm
 
 		return vo
 
 	@staticmethod
 	def backward(ctx, dvo):
-		q,k,v,attn_sm,coo,coo_cnt_max = ctx.saved_tensors[:6]
+		v,q,k,attn_sm,coo,coo_cnt_max = ctx.saved_tensors[:6] 
 		coo_cnt_max = coo_cnt_max.item()
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0]
 
-		# scatter vo back to vw, calc dv
+		# scatter dvo back to vw, calc dv
 		dvw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width), \
 			device=q.device, dtype=q.dtype)
 		dvw[:,coo[:,0],coo[:,2],:,:] = dvo[:,coo[:,1],:,:]
-		dv = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, dvw)
+		dv = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, dvw) 
 
 		# calculate derivative wrt softmax
 		vw = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width), \
@@ -118,10 +120,10 @@ class L1AttnSparseFn(Function):
 		wss = torch.zeros((bs, n_tok, coo_cnt_max+1, n_heads, width), \
 			device=q.device, dtype=q.dtype)
 		wss[:,coo[:,0],coo[:,2],:,:] = ws[:,coo[:,1],:,:]
-		dq = torch.einsum("bdrhw, bdrh -> bdhw", wss, dattn)
-		dk = torch.einsum("bdrhw, bdrh -> bdhw", wss, -1*dattn)
+		dq = torch.einsum("bdrhw, bdrh -> bdhw", wss, dattn_sm) #FIXME dattn
+		dk = torch.einsum("bdrhw, bdrh -> bdhw", wss, -1*dattn_sm) #FIXME dattn
 
-		return dq, dk, dv, None, None
+		return dv, dq, dk, None, None
 
 def expandCoo(co):
 	'''
@@ -154,14 +156,16 @@ def expandCoo(co):
 	return coo, coo_cnt_max
 
 def testL1AttnSparse(q, k, v, co):
-	coo, coo_cnt_max = expandCoo(co)
-	m = L1AttnSparse()
-	vout = m(q, k, v, coo, coo_cnt_max)
+	print('testL1AttnSparse')
 	print('q', torch.squeeze(q))
 	print('k', torch.squeeze(k))
 	print('v', torch.squeeze(v))
+	coo, coo_cnt_max = expandCoo(co)
+	m = L1AttnSparse()
+	vout = m(q, k, v, coo, coo_cnt_max)
 	print('coo', coo)
 	print('vout', torch.squeeze(vout))
+	print('-------')
 	return vout
 
 if __name__ == "__main__":
@@ -214,7 +218,7 @@ if __name__ == "__main__":
 	m = l1attn.L1Attn()
 	a = m.forward(q, k)
 	a_sm = F.softmax(a, -2)
-	vf = torch.einsum('bhsd, bshw -> bdhw', a_sm, v)
+	vf = torch.einsum('bhsd, bshw -> bdhw', a, v) #FIXME
 	print('full / default attn')
 	print('vout', vf)
 	print('diff', vs-vf)
