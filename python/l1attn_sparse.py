@@ -5,6 +5,8 @@ from torch.autograd import Function
 import l1attn
 import pdb
 
+use_softmax = True
+
 class L1AttnSparse(torch.nn.Module):
 	def __init__(self):
 		super(L1AttnSparse, self).__init__()
@@ -39,8 +41,10 @@ class L1AttnSparse(torch.nn.Module):
 		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
 		attn = torch.ones(bs, n_heads, n_tok, dst_mxlen+1, device=q.device, dtype=q.dtype)*-1e32 # -infty
 		attn[:,:,coo[:,0], coo[:,2]] = ww[:,:,0:cl] # scatter op
-		attn_sm = F.softmax(attn, -1)
-		attn_sm = attn # FIXME
+		if use_softmax:
+			attn_sm = F.softmax(attn, -1)
+		else:
+			attn_sm = attn
 		vw = torch.zeros(bs, n_heads, n_tok, dst_mxlen+1, width, device=q.device, dtype=q.dtype)
 		vw[:,:,coo[:,0],coo[:,2],:] = vv[:,:,coo[:,1],:]
 		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vw) # sum over src
@@ -75,14 +79,17 @@ class L1AttnSparseFn(Function):
 		attn = torch.ones((bs, n_tok, dst_mxlen+1, n_heads),\
 			device=q.device, dtype=q.dtype)*-1e12 # -infty
 		attn[:,coo[:,0],coo[:,2],:] = ww[:,0:cl,:] # scatter op
-		attn_sm = F.softmax(attn, 2)
+		if use_softmax:
+			attn_sm = F.softmax(attn, 2)
+		else:
+			attn_sm = attn
 		vw = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width),\
 			device=q.device, dtype=q.dtype) # uff, large matrix
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
-		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn, vw) # FIXME attn_sm sum over src
+		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, vw) # sum over src
 
-		ctx.save_for_backward(v, q, k, attn, coo, \
-			torch.tensor(dst_mxlen), torch.tensor(src_mxlen)) # FIXME attn_sm
+		ctx.save_for_backward(v, q, k, attn_sm, coo, \
+			torch.tensor(dst_mxlen), torch.tensor(src_mxlen))
 
 		return vo
 
@@ -109,17 +116,19 @@ class L1AttnSparseFn(Function):
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
 		dattn_sm = torch.einsum("bdrhw, bdhw -> bdrh ", vw, dvo)
 
-		# # calculate the jacobian of the softmax
-		# j = -1*torch.einsum("bdrh, bdqh -> bdrqh", attn_sm, attn_sm)
-		# # I cannot figure out how to do this using tensor ops..
-		# for b in range(bs):
-		# 	for d in range(n_tok):
-		# 		for r in range(dst_mxlen+1):
-		# 			for h in range(n_heads):
-		# 				j[b,d,r,r,h] = attn_sm[b,d,r,h] * (1-attn_sm[b,d,r,h])
-		# # note: jacobian is symmetric, so this might be transposed
-		# dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
-		dattn = dattn_sm # FIXME
+		# calculate the jacobian of the softmax
+		if use_softmax:
+			j = -1*torch.einsum("bdrh, bdqh -> bdrqh", attn_sm, attn_sm)
+			# I cannot figure out how to do this using tensor ops..
+			for b in range(bs):
+				for d in range(n_tok):
+					for r in range(dst_mxlen+1):
+						for h in range(n_heads):
+							j[b,d,r,r,h] = attn_sm[b,d,r,h] * (1-attn_sm[b,d,r,h])
+			# note: jacobian is symmetric, so this might be transposed
+			dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
+		else:
+			dattn = dattn_sm
 
 		# recreate qq,kk broadcasts.
 		qq = q[:,coo[:,0],:,:] # bchw

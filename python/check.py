@@ -37,3 +37,12 @@ assert( torch.allclose(x1, x2) )
 variables = [v, q, k, coo, dst_mxlen, src_mxlen]
 if gradcheck(L1AttnSparseFn.apply, variables):
     print('Backward: Baseline grad Ok')
+
+# attention is indexing permutation invariant; check this .
+indx = torch.randperm(co.shape[0])
+co = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co)
+
+variables = [v, q, k, coo, dst_mxlen, src_mxlen]
+if gradcheck(L1AttnSparseFn.apply, variables):
+    print('Backward: Baseline grad Ok w/ permutation')
