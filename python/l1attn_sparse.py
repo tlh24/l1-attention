@@ -221,12 +221,12 @@ def testL1AttnSparse(q, k, v, co):
 	print('vout', torch.squeeze(vout))
 	return vout
 
-if __name__ == "__main__":
+def quickTest():
 	batch_size = 1
 	n_ctx = 3
 	n_heads = 1
 	width = 3
-	
+
 	q = torch.zeros(batch_size, n_ctx, n_heads, width)
 	q[:,0,:,0] = 0
 	q[:,0,:,1] = 1
@@ -237,7 +237,7 @@ if __name__ == "__main__":
 	q[:,2,:,0] = 0
 	q[:,2,:,1] = 0
 	q[:,2,:,2] = 0
-	
+
 	k = torch.zeros(batch_size, n_ctx, n_heads, width)
 	k[:,0,:,0] = 2
 	k[:,0,:,1] = 1
@@ -248,7 +248,7 @@ if __name__ == "__main__":
 	k[:,2,:,0] = 0
 	k[:,2,:,1] = 1
 	k[:,2,:,2] = 2
-	
+
 	v = torch.zeros(batch_size, n_ctx, n_heads, width)
 	v[:,0,:,0] = -2
 	v[:,0,:,1] = 2
@@ -282,5 +282,9 @@ if __name__ == "__main__":
 	co = co[indx, :]
 	vs = testL1AttnSparse(q, k, v, co)
 	assert torch.allclose(vs, vf)
-	
+
 	print('assertions passed')
+
+if __name__ == "__main__":
+	quickTest()
+
