@@ -118,13 +118,16 @@ class L1AttnSparseFn(Function):
 
 		# calculate the jacobian of the softmax
 		if use_softmax:
+			# outer product
 			j = -1*torch.einsum("bdrh, bdqh -> bdrqh", attn_sm, attn_sm)
-			# I cannot figure out how to do this using tensor ops..
-			for b in range(bs):
-				for d in range(n_tok):
-					for r in range(dst_mxlen+1):
-						for h in range(n_heads):
-							j[b,d,r,r,h] = attn_sm[b,d,r,h] * (1-attn_sm[b,d,r,h])
+			diag = torch.einsum("bdrh, bdrh -> bdrh", attn_sm, (1-attn_sm))
+			i = torch.arange(dst_mxlen+1)
+			j[:,:,i,i,:] = diag[:,:,i,:]
+			# for b in range(bs):
+			# 	for d in range(n_tok):
+			# 		for r in range(dst_mxlen+1):
+			# 			for h in range(n_heads):
+			# 				j[b,d,r,r,h] = attn_sm[b,d,r,h] * (1-attn_sm[b,d,r,h])
 			# note: jacobian is symmetric, so this might be transposed
 			dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
 		else:
@@ -146,7 +149,7 @@ class L1AttnSparseFn(Function):
 		dattn_k[:,coo[:,1],coo[:,3],:] = dattn[:,coo[:,0],coo[:,2],:]
 		dq = torch.einsum("bdrhw, bdrh -> bdhw", wsq, dattn)
 		dk = torch.einsum("bsrhw, bsrh -> bshw", wsk, -1*dattn_k)
-		print('called')
+
 		return dv, dq, dk, None, None, None
 
 class LinFun(Function):
@@ -221,7 +224,7 @@ def testL1AttnSparse(q, k, v, co):
 	print('vout', torch.squeeze(vout))
 	return vout
 
-def quickTest():
+def sparseNonsparseTest():
 	batch_size = 1
 	n_ctx = 3
 	n_heads = 1
@@ -286,5 +289,5 @@ def quickTest():
 	print('assertions passed')
 
 if __name__ == "__main__":
-	quickTest()
+	sparseNonsparseTest()
 

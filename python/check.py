@@ -1,7 +1,7 @@
 import time
 import torch
 from torch.autograd import gradcheck
-from l1attn_sparse import quickTest, LinFun, L1AttnSparse, L1AttnSparseFn, expandCoo
+from l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1AttnSparseFn, expandCoo
 
 if True:
     batch_size = 2
@@ -27,7 +27,7 @@ variables = [x, w]
 if gradcheck(LinFun.apply, variables):
     print('Backward: LinFun grad Ok')
 
-quickTest()
+sparseNonsparseTest() # from l1attn_sparse.py
 
 q = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
 k = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
@@ -47,9 +47,18 @@ if gradcheck(L1AttnSparseFn.apply, variables):
 
 # attention is indexing permutation invariant; check this .
 indx = torch.randperm(co.shape[0])
-co = co[indx, :]
-coo, dst_mxlen, src_mxlen = expandCoo(co)
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
 
 variables = [v, q, k, coo, dst_mxlen, src_mxlen]
 if gradcheck(L1AttnSparseFn.apply, variables):
     print('Backward: Baseline grad Ok w/ permutation')
+
+# now drop 4 indices, see if it still works.
+indx = indx[0:-4]
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+
+variables = [v, q, k, coo, dst_mxlen, src_mxlen]
+if gradcheck(L1AttnSparseFn.apply, variables):
+    print('Backward: Baseline grad Ok w/ sparsity + permutation')
