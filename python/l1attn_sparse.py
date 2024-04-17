@@ -40,6 +40,7 @@ class L1AttnSparse(torch.nn.Module):
 		attn = torch.ones(bs, n_heads, n_tok, dst_mxlen+1, device=q.device, dtype=q.dtype)*-1e32 # -infty
 		attn[:,:,coo[:,0], coo[:,2]] = ww[:,:,0:cl] # scatter op
 		attn_sm = F.softmax(attn, -1)
+		attn_sm = attn # FIXME
 		vw = torch.zeros(bs, n_heads, n_tok, dst_mxlen+1, width, device=q.device, dtype=q.dtype)
 		vw[:,:,coo[:,0],coo[:,2],:] = vv[:,:,coo[:,1],:]
 		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vw) # sum over src
@@ -67,10 +68,10 @@ class L1AttnSparseFn(Function):
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0] # tempted to name it cool (coo_length)
 
-		qq = q[:,coo[:,0],:,:] # this should broadcast properly.
-		kk = k[:,coo[:,1],:,:]
+		qq = q[:,coo[:,0],:,:] # broadcast dst to cl
+		kk = k[:,coo[:,1],:,:] # broadcast src to cl
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
-		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
+		ww = torch.sum(torch.abs(qq - kk), -1)*scale
 		attn = torch.ones((bs, n_tok, dst_mxlen+1, n_heads),\
 			device=q.device, dtype=q.dtype)*-1e12 # -infty
 		attn[:,coo[:,0],coo[:,2],:] = ww[:,0:cl,:] # scatter op
@@ -78,10 +79,10 @@ class L1AttnSparseFn(Function):
 		vw = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width),\
 			device=q.device, dtype=q.dtype) # uff, large matrix
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
-		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, vw) # sum over src
-		# dest must be full -- all locations written!
+		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn, vw) # FIXME attn_sm sum over src
 
-		ctx.save_for_backward(v, q, k, attn_sm, coo, torch.tensor(dst_mxlen), torch.tensor(src_mxlen))
+		ctx.save_for_backward(v, q, k, attn, coo, \
+			torch.tensor(dst_mxlen), torch.tensor(src_mxlen)) # FIXME attn_sm
 
 		return vo
 
@@ -102,30 +103,38 @@ class L1AttnSparseFn(Function):
 		dv = torch.sum(dvp, 2)
 
 		# calculate derivative wrt softmax
+		# first recreate vw
 		vw = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width), \
 			device=q.device, dtype=q.dtype)
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
-		dattn_sm = torch.einsum("bdrhw, bdrhw -> bdrh ", vw, dvw)
+		dattn_sm = torch.einsum("bdrhw, bdhw -> bdrh ", vw, dvo)
 
-		# calculate the jacobian of the softmax
-		j = -1*torch.einsum("bdrh, bdqh -> bdrqh", attn_sm, attn_sm)
-		# diagonal elements
-		j[:,:,coo[:,1],coo[:,1],:] = \
-			attn_sm[:,:,coo[:,1],:] * (1-attn_sm[:,:,coo[:,1],:])
-		# note: jacobian is symmetric, so this might be transposed
-		dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
+		# # calculate the jacobian of the softmax
+		# j = -1*torch.einsum("bdrh, bdqh -> bdrqh", attn_sm, attn_sm)
+		# # I cannot figure out how to do this using tensor ops..
+		# for b in range(bs):
+		# 	for d in range(n_tok):
+		# 		for r in range(dst_mxlen+1):
+		# 			for h in range(n_heads):
+		# 				j[b,d,r,r,h] = attn_sm[b,d,r,h] * (1-attn_sm[b,d,r,h])
+		# # note: jacobian is symmetric, so this might be transposed
+		# dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
+		dattn = dattn_sm # FIXME
 
-		# now for q
-		qq = q[:,coo[:,0],:,:] # bdhw
+		# recreate qq,kk broadcasts.
+		qq = q[:,coo[:,0],:,:] # bchw
 		kk = k[:,coo[:,1],:,:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
-		ws = torch.sign(qq - kk)*scale
-		wss = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width), \
+		ws = torch.sign(qq - kk)*scale # sign not abs
+		wsq = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width), \
 			device=q.device, dtype=q.dtype)
-		wss[:,coo[:,0],coo[:,2],:,:] = ws[:,coo[:,1],:,:]
-		dq = torch.einsum("bdrhw, bdrh -> bdhw", wss, dattn)
-		dk = torch.einsum("bdrhw, bdrh -> bdhw", wss, -1*dattn)
-
+		wsk = torch.zeros((bs, n_tok, src_mxlen+1, n_heads, width), \
+			device=q.device, dtype=q.dtype)
+		wsq[:,coo[:,0],coo[:,2],:,:] = ws[:,0:cl,:,:]
+		wsk[:,coo[:,1],coo[:,3],:,:] = ws[:,0:cl,:,:]
+		dq = torch.einsum("bdrhw, bdrh -> bdhw", wsq, dattn)
+		dk = torch.einsum("bdrhw, bdrh -> bdhw", wsk, -1*dattn)
+		print('called')
 		return dv, dq, dk, None, None, None
 
 class LinFun(Function):
