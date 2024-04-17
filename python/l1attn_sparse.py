@@ -132,8 +132,11 @@ class L1AttnSparseFn(Function):
 			device=q.device, dtype=q.dtype)
 		wsq[:,coo[:,0],coo[:,2],:,:] = ws[:,0:cl,:,:]
 		wsk[:,coo[:,1],coo[:,3],:,:] = ws[:,0:cl,:,:]
+		dattn_k = torch.zeros((bs, n_tok, src_mxlen+1, n_heads), \
+			device=q.device, dtype=q.dtype)
+		dattn_k[:,coo[:,1],coo[:,3],:] = dattn[:,coo[:,0],coo[:,2],:]
 		dq = torch.einsum("bdrhw, bdrh -> bdhw", wsq, dattn)
-		dk = torch.einsum("bdrhw, bdrh -> bdhw", wsk, -1*dattn)
+		dk = torch.einsum("bsrhw, bsrh -> bshw", wsk, -1*dattn_k)
 		print('called')
 		return dv, dq, dk, None, None, None
 
