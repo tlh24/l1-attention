@@ -60,14 +60,20 @@ class L1AttnSparseFn(Function):
 			shape [batch_size, n_tok, n_heads, width]
 			for Query, Key, and Value respectively.
 		coo is a vector size [cl,3]
-			with elements coo[i,:] = [dst,src,sm_cnt]
-			where dst indexes q
-			and src indexes k,v
-			and sm_cnt indexes softmax
+			with elements coo[i,:] = [dst,src,dst_cnt]
+			where: 
+			dst indexes q
+			src indexes k,v
+			dst_cnt indexes attention & softmax
 				that is, for each dst it compresses/indexes src to be non-sparse.
 				(otherwise we need to allocate a full softmax matrix)
+				for each dst: src0 src3 src4 ... -> 0,1,2
+			src_cnt indexes backward pass k,v
+				that is, for each src it compresses/indexes dst to be non-sparse. 
+				for each src: dst1 dst2 dst5 ... -> 0,1,2
 		dst and src are in [0 .. n_tok)
-		sm_cnt is in [0 .. coo_cnt_max)
+		dst_cnt is in [0 .. dst_mxlen)
+		src_cnt is in [0 .. src_mxlen)
 		'''
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0] # tempted to name it cool (coo_length)
@@ -123,12 +129,6 @@ class L1AttnSparseFn(Function):
 			diag = torch.einsum("bdrh, bdrh -> bdrh", attn_sm, (1-attn_sm))
 			i = torch.arange(dst_mxlen+1)
 			j[:,:,i,i,:] = diag[:,:,i,:]
-			# for b in range(bs):
-			# 	for d in range(n_tok):
-			# 		for r in range(dst_mxlen+1):
-			# 			for h in range(n_heads):
-			# 				j[b,d,r,r,h] = attn_sm[b,d,r,h] * (1-attn_sm[b,d,r,h])
-			# note: jacobian is symmetric, so this might be transposed
 			dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
 		else:
 			dattn = dattn_sm
@@ -136,7 +136,7 @@ class L1AttnSparseFn(Function):
 		# recreate qq,kk broadcasts.
 		qq = q[:,coo[:,0],:,:] # bchw
 		kk = k[:,coo[:,1],:,:]
-		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
+		scale = -1 / math.sqrt(width) 
 		ws = torch.sign(qq - kk)*scale # sign not abs
 		wsq = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width), \
 			device=q.device, dtype=q.dtype)
