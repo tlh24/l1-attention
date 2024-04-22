@@ -26,15 +26,17 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 
 	auto scale = -1.0 / sqrt(width); 
 
+	assert(v.device() == torch::kCPU);
 	assert(q.device() == torch::kCPU);
 	assert(k.device() == torch::kCPU); 
+	assert(coo.device() == torch::kCPU);
 
 	auto options = torch::TensorOptions()
 		.dtype(q.dtype())
 		.device(q.device())
 		.requires_grad(q.requires_grad()); 
 		
-	auto attn = torch::ones({bs, n_tok, dst_mxlen+1, n_heads}, options);
+	auto attn = torch::ones({bs, n_tok, dst_mxlen, n_heads}, options);
 	attn = attn * -1e12; // -infty
 	auto vo = torch::zeros({bs, n_tok, n_heads, width}, options);
 
@@ -48,8 +50,8 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 	for(int b = 0; b < bs; b++){
 		for(int h = 0; h < n_heads; h++){
 			for(int c = 0; c < cl; c++){
-				int src = coo_acc[c][0];
-				int dst = coo_acc[c][1];
+				int dst = coo_acc[c][0];
+				int src = coo_acc[c][1];
 				int r = coo_acc[c][2]; 
 				DTYPE f = 0.0; 
 				for(int w = 0; w < width; w++){
@@ -68,8 +70,8 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 			}
 			// compute vo
 			for(int c = 0; c < cl; c++){
-				int src = coo_acc[c][0];
-				int dst = coo_acc[c][1];
+				int dst = coo_acc[c][0];
+				int src = coo_acc[c][1];
 				int r = coo_acc[c][2];
 				for(int w = 0; w < width; w++){
 					vo_acc[b][dst][h][w] += 
@@ -106,8 +108,8 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 	auto d_v = torch::zeros({bs, n_tok, n_heads, width}, options);
 	auto d_q = torch::zeros({bs, n_tok, n_heads, width}, options);
 	auto d_k = torch::zeros({bs, n_tok, n_heads, width}, options);
-	auto dattn_sm = torch::zeros({bs, n_tok, dst_mxlen+1, n_heads}, options);
-	auto dattn = torch::zeros({bs, n_tok, dst_mxlen+1, n_heads}, options);
+	auto dattn_sm = torch::zeros({bs, n_tok, dst_mxlen, n_heads}, options);
+	auto dattn = torch::zeros({bs, n_tok, dst_mxlen, n_heads}, options);
 
 	auto dvo_acc = dvo.accessor<DTYPE,4>(); 
 	auto v_acc = v.accessor<DTYPE,4>(); 
@@ -125,8 +127,8 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 	for(int b = 0; b < bs; b++){
 		for(int h = 0; h < n_heads; h++){
 			for(int c = 0; c < cl; c++){
-				int src = coo_acc[c][0];
-				int dst = coo_acc[c][1];
+				int dst = coo_acc[c][0];
+				int src = coo_acc[c][1];
 				int r = coo_acc[c][2];
 				// calc dv -- scale dvo by attn
 				for(int w = 0; w < width; w++){
@@ -154,14 +156,14 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 			}
 			// calculate dq and dk
 			for(int c = 0; c < cl; c++){
-				int src = coo_acc[c][0];
-				int dst = coo_acc[c][1];
+				int dst = coo_acc[c][0];
+				int src = coo_acc[c][1];
 				int r = coo_acc[c][2];
 				for(int w = 0; w < width; w++){
 					DTYPE ws = q_acc[b][dst][h][w] - k_acc[b][src][h][w];
 					ws = sign(ws) * scale; 
-					dq_acc[b][dst][h][w] += ws * dattn_acc[b][dst][r][w]; 
-					dk_acc[b][src][h][w] += -1*ws * dattn_acc[b][dst][r][w]; 
+					dq_acc[b][dst][h][w] += ws * dattn_acc[b][dst][r][h]; 
+					dk_acc[b][src][h][w] += -1*ws * dattn_acc[b][dst][r][h]; 
 				}
 			}
 		}

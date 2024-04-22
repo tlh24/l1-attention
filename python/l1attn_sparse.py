@@ -2,8 +2,15 @@ import math
 import torch
 import torch.nn.functional as F
 from torch.autograd import Function
-import l1attn
 import pdb
+
+# add the local directory to the Path
+from pathlib import Path
+import sys
+path_root = Path(__file__).parents[0]
+sys.path.append(str(path_root))
+print(sys.path)
+import l1attn
 
 use_softmax = True
 
@@ -39,13 +46,13 @@ class L1AttnSparse(torch.nn.Module):
 		kk = kk[:,:,coo[:,1],:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
-		attn = torch.ones(bs, n_heads, n_tok, dst_mxlen+1, device=q.device, dtype=q.dtype)*-1e32 # -infty
+		attn = torch.ones(bs, n_heads, n_tok, dst_mxlen, device=q.device, dtype=q.dtype)*-1e12 # -infty
 		attn[:,:,coo[:,0], coo[:,2]] = ww[:,:,0:cl] # scatter op
 		if use_softmax:
 			attn_sm = F.softmax(attn, -1)
 		else:
 			attn_sm = attn
-		vw = torch.zeros(bs, n_heads, n_tok, dst_mxlen+1, width, device=q.device, dtype=q.dtype)
+		vw = torch.zeros(bs, n_heads, n_tok, dst_mxlen, width, device=q.device, dtype=q.dtype)
 		vw[:,:,coo[:,0],coo[:,2],:] = vv[:,:,coo[:,1],:]
 		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vw) # sum over src
 		# vout = torch.zeros_like(v)
@@ -82,14 +89,14 @@ class L1AttnSparseFn(Function):
 		kk = k[:,coo[:,1],:,:] # broadcast src to cl
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk), -1)*scale
-		attn = torch.ones((bs, n_tok, dst_mxlen+1, n_heads),\
+		attn = torch.ones((bs, n_tok, dst_mxlen, n_heads),\
 			device=q.device, dtype=q.dtype)*-1e12 # -infty
 		attn[:,coo[:,0],coo[:,2],:] = ww[:,0:cl,:] # scatter op
 		if use_softmax:
 			attn_sm = F.softmax(attn, 2)
 		else:
 			attn_sm = attn
-		vw = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width),\
+		vw = torch.zeros((bs, n_tok, dst_mxlen, n_heads, width),\
 			device=q.device, dtype=q.dtype) # uff, large matrix
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
 		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, vw) # sum over src
@@ -110,14 +117,14 @@ class L1AttnSparseFn(Function):
 		# scale dvo by attn matrix
 		dvw = torch.einsum("bdrh, bdhw -> bdrhw", attn_sm, dvo)
 		# gather and sum
-		dvp = torch.zeros((bs, n_tok, src_mxlen+1, n_heads, width), \
+		dvp = torch.zeros((bs, n_tok, src_mxlen, n_heads, width), \
 			device=q.device, dtype=q.dtype)
 		dvp[:,coo[:,1],coo[:,3],:] = dvw[:,coo[:,0],coo[:,2],:]
 		dv = torch.sum(dvp, 2)
 
 		# calculate derivative wrt softmax
 		# first recreate vw
-		vw = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width), \
+		vw = torch.zeros((bs, n_tok, dst_mxlen, n_heads, width), \
 			device=q.device, dtype=q.dtype)
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
 		dattn_sm = torch.einsum("bdrhw, bdhw -> bdrh ", vw, dvo)
@@ -127,7 +134,7 @@ class L1AttnSparseFn(Function):
 			# outer product
 			j = -1*torch.einsum("bdrh, bdqh -> bdrqh", attn_sm, attn_sm)
 			diag = torch.einsum("bdrh, bdrh -> bdrh", attn_sm, (1-attn_sm))
-			i = torch.arange(dst_mxlen+1)
+			i = torch.arange(dst_mxlen)
 			j[:,:,i,i,:] = diag[:,:,i,:]
 			dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
 		else:
@@ -138,13 +145,13 @@ class L1AttnSparseFn(Function):
 		kk = k[:,coo[:,1],:,:]
 		scale = -1 / math.sqrt(width) 
 		ws = torch.sign(qq - kk)*scale # sign not abs
-		wsq = torch.zeros((bs, n_tok, dst_mxlen+1, n_heads, width), \
+		wsq = torch.zeros((bs, n_tok, dst_mxlen, n_heads, width), \
 			device=q.device, dtype=q.dtype)
-		wsk = torch.zeros((bs, n_tok, src_mxlen+1, n_heads, width), \
+		wsk = torch.zeros((bs, n_tok, src_mxlen, n_heads, width), \
 			device=q.device, dtype=q.dtype)
 		wsq[:,coo[:,0],coo[:,2],:,:] = ws[:,0:cl,:,:]
 		wsk[:,coo[:,1],coo[:,3],:,:] = ws[:,0:cl,:,:]
-		dattn_k = torch.zeros((bs, n_tok, src_mxlen+1, n_heads), \
+		dattn_k = torch.zeros((bs, n_tok, src_mxlen, n_heads), \
 			device=q.device, dtype=q.dtype)
 		dattn_k[:,coo[:,1],coo[:,3],:] = dattn[:,coo[:,0],coo[:,2],:]
 		dq = torch.einsum("bdrhw, bdrh -> bdhw", wsq, dattn)
@@ -211,7 +218,8 @@ def expandCoo(co):
 		if i not in src_cntr:
 			print(f'degenerate sparse head - {i} not read')
 	print('coo', coo)
-	return coo, dst_mxlen, src_mxlen
+	# dst_mxlen and src_mxlen are indexes / add 1 to get the max length.
+	return coo, dst_mxlen+1, src_mxlen+1
 
 def testL1AttnSparse(q, k, v, co):
 	coo, dst_mxlen, src_mxlen = expandCoo(co)
@@ -286,7 +294,7 @@ def sparseNonsparseTest():
 	vs = testL1AttnSparse(q, k, v, co)
 	assert torch.allclose(vs, vf)
 
-	print('assertions passed')
+	print('l1attn_sparse.py assertions passed')
 
 if __name__ == "__main__":
 	sparseNonsparseTest()

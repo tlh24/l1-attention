@@ -4,7 +4,7 @@ from torch.autograd import Function
 import torch
 import pdb
 
-import l1attn_cpp
+import l1attn_drv_cpp
 
 torch.manual_seed(42)
 

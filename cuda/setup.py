@@ -3,10 +3,10 @@ from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 setup(
     name='l1attn_cuda',
-    py_modules=['l1attn'],
+    py_modules=['l1attn_cuda'],
     ext_modules=[
         CUDAExtension('l1attn_cuda', [
-            'l1attn_cuda.cpp',
+            'l1attn_cuda_drv.cpp',
             'l1attn_cuda_kernel.cu',],
         extra_compile_args={
                 "nvcc": [
