@@ -24,7 +24,7 @@ __global__ void l1attnSparse_fwd_attn_kernel(
 	attn,
 	const scalar_t scale, 
 	const int bs, const int n_tok, const int n_heads, const int width, 
-	const int cl, const int dst_maxlen)
+	const int cl, const int dst_mxlen)
 {
 	__shared__ scalar_t acc[8][32];
 
@@ -77,7 +77,7 @@ __global__ void l1attnSparse_fwd_sm_kernel(
 	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	attn,
 	const int bs, const int n_tok, const int n_heads, const int width, 
-	const int cl, const int dst_maxlen)
+	const int cl, const int dst_mxlen)
 {
 
 	int indx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -91,14 +91,14 @@ __global__ void l1attnSparse_fwd_sm_kernel(
 		int d = j; 
 		
 		// ideally, each thread in a warp should access consecutive memory. 
-		// this is hard since dst_maxlen is potentially small. 
+		// this is hard since dst_mxlen is potentially small.
 		// simple option is to loop over this index within the thread. 
 		// this avoids race cases as each thread operates in-place,
 		// on one row by itself.
 		
 		scalar_t f = 1e-12; 
 		for(int r = 0; r < dst_mxlen; r++){
-			f += exp(attn[b][d][r][h])
+			f += exp(attn[b][d][r][h]);
 		}
 		for(int r = 0; r < dst_mxlen; r++){
 			attn[b][d][r][h] = exp(attn[b][d][r][h]) / f; 
@@ -117,7 +117,7 @@ __global__ void l1attnSparse_fwd_vo_kernel(
 	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	vo, 
 	const int bs, const int n_tok, const int n_heads, const int width, 
-	const int cl, const int dst_maxlen)
+	const int cl, const int dst_mxlen)
 {
 	// 1D threads and blocks.
 	int indx = threadIdx.x + blockIdx.x * blockDim.x;
@@ -136,7 +136,7 @@ __global__ void l1attnSparse_fwd_vo_kernel(
 		int src = coo[c][1]; 
 		int r = coo[c][2]; 
 
-		atomicAdd(&(vo[b][dst][h][w]), attn[b][dst][r][h] * v[b][src][h][w]);
+		atomicAdd((scalar_t*)&(vo[b][dst][h][w]), attn[b][dst][r][h] * v[b][src][h][w]);
 	}
 }
 
@@ -155,7 +155,7 @@ __global__ void l1attnSparse_bkwd_dv_dattn_sm_kernel(
 	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	dattn_sm,
 	const int bs, const int n_tok, const int n_heads, const int width, 
-	const int cl, const int dst_maxlen)
+	const int cl, const int dst_mxlen)
 {
 	__shared__ scalar_t acc[8][32];
 	
@@ -188,7 +188,7 @@ __global__ void l1attnSparse_bkwd_dv_dattn_sm_kernel(
 			int o = w*32+tix; 
 			if(o < width){
 				// calc dv
-				atomicAdd(&(dv[b][src][h][o]), at * dvo[b][dst][h][o]); 
+				atomicAdd((scalar_t*)&(dv[b][src][h][o]), at * dvo[b][dst][h][o]);
 				// sum dattn_sm
 				f += v[b][src][h][o] * dvo[b][dst][h][o];
 			}
@@ -221,7 +221,7 @@ __global__ void l1attnSparse_bkwd_dattn_kernel(
 	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	dattn,
 	const int bs, const int n_tok, const int n_heads, const int width, 
-	const int cl, const int dst_maxlen)
+	const int cl, const int dst_mxlen)
 {
 	// each thread computes one element of dattn 
 	// (dst_mxlen ops)
@@ -229,7 +229,7 @@ __global__ void l1attnSparse_bkwd_dattn_kernel(
 	int indx = threadIdx.x + blockIdx.x * blockDim.x; // 1D
 	
 	if(indx < bs*n_heads*n_tok*dst_mxlen){
-		j = indx; 
+		int j = indx;
 		int h = j % n_heads; 
 		j /= n_heads; 
 		int r = j % dst_mxlen; 
@@ -269,7 +269,7 @@ __global__ void l1attnSparse_bkwd_dq_dk_kernel(
 	dk,
 	const scalar_t scale, 
 	const int bs, const int n_tok, const int n_heads, const int width, 
-	const int cl, const int dst_maxlen)
+	const int cl, const int dst_mxlen)
 {
 	// again, each thread computes & writes one element of dq and dk
 	int indx = threadIdx.x + blockIdx.x * blockDim.x; // 1D
@@ -291,8 +291,8 @@ __global__ void l1attnSparse_bkwd_dq_dk_kernel(
 		
 		scalar_t ws = q[b][dst][h][w] - k[b][src][h][w]; 
 		ws = sign(ws) * scale; 
-		atomicAdd(dq[b][dst][h][w], ws * dattn[b][dst][r][h]); 
-		atomicAdd(dk[b][src][h][w] += -1*ws * dattn_acc[b][dst][r][h];
+		atomicAdd((scalar_t*)&(dq[b][dst][h][w]), ws * dattn[b][dst][r][h]);
+		atomicAdd((scalar_t*)&(dk[b][src][h][w]), -1*ws * dattn[b][dst][r][h]);
 	}
 }
 
@@ -305,7 +305,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 		int dst_mxlen ) 
 {
 	int bs = q.sizes()[0]; 
-	int n_ctx = q.sizes()[1]; 
+	int n_tok = q.sizes()[1];
 	int n_heads = q.sizes()[2]; 
 	int width = q.sizes()[3];
 	int cl = coo.sizes()[0];
@@ -320,7 +320,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 	auto vo = torch::zeros({bs, n_tok, n_heads, width}, options);
 
 	const dim3 dimBlocks(32, 8); // x, y, z
-	const int n_elements = bs * n_heads * cl; 
+	int n_elements = bs * n_heads * cl;
 	assert((n_elements % 8) == 0); 
 	int n_blocks = n_elements / 8; 
 
@@ -332,7 +332,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			coo.packed_accessor32<int,2,torch::RestrictPtrTraits>(),
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-			scale, bs, n_tok, n_heads, width, cl, dst_maxlen);
+			scale, bs, n_tok, n_heads, width, cl, dst_mxlen);
 	}));
 	
 	const int threads = 256; 
@@ -342,7 +342,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_fwd_sm_kernel", ([&] {
 		l1attnSparse_fwd_sm_kernel<scalar_t><<<n_blocks, threads>>>(
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-			bs, n_tok, n_heads, width, cl, dst_maxlen);
+			bs, n_tok, n_heads, width, cl, dst_mxlen);
 	}));
 	
 	n_elements = bs * n_heads * cl * width; 
@@ -354,7 +354,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 			coo.packed_accessor32<int,2,torch::RestrictPtrTraits>(),
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			vo.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-			bs, n_tok, n_heads, width, cl, dst_maxlen);
+			bs, n_tok, n_heads, width, cl, dst_mxlen);
 	}));
 
 	return {vo, attn};
@@ -389,7 +389,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	auto dattn = torch::zeros({bs, n_tok, dst_mxlen, n_heads}, options);
 	
 	const dim3 dimBlocks(32, 8); // x, y, z
-	const int n_elements = bs * n_heads * cl; 
+	int n_elements = bs * n_heads * cl;
 	assert((n_elements % 8) == 0); 
 	int n_blocks = n_elements / 8; 
 		
@@ -401,7 +401,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			dv.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			dattn_sm.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-			bs, n_tok, n_heads, width, cl, dst_maxlen);
+			bs, n_tok, n_heads, width, cl, dst_mxlen);
 	}));
 	
 	const int threads = 256; 
@@ -413,21 +413,21 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			dattn_sm.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			dattn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-			bs, n_tok, n_heads, width, cl, dst_maxlen);
+			bs, n_tok, n_heads, width, cl, dst_mxlen);
 	}));
 	
 	n_elements = bs * n_heads * cl * width; 
 	n_blocks = (n_elements + threads - 1) / threads;
 	
-	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dattn_kernel", ([&] {
-		l1attnSparse_bkwd_dattn_kernel<scalar_t><<<n_blocks, threads>>>(
+	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dq_dk_kernel", ([&] {
+		l1attnSparse_bkwd_dq_dk_kernel<scalar_t><<<n_blocks, threads>>>(
 			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			coo.packed_accessor32<int,2,torch::RestrictPtrTraits>(),
 			dattn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			dq.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			dk.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-			bs, n_tok, n_heads, width, cl, dst_maxlen);
+			scale, bs, n_tok, n_heads, width, cl, dst_mxlen);
 	}));
 	
 	return {dv, dq, dk};
