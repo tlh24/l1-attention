@@ -141,7 +141,7 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 						v_acc[b][src][h][w] * dvo_acc[b][dst][h][w];
 				}
 			}
-			// multiply dattn_sm by jacobian (without allocating it)
+			// multiply dattn_sm by sm jacobian (without allocating it)
 			for(int d = 0; d < n_tok; d++){
 				for(int r = 0; r < dst_mxlen; r++){
 					for(int q = 0; q < dst_mxlen; q++){

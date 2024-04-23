@@ -4,13 +4,13 @@ from torch.autograd import gradcheck
 from python.l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1AttnSparseFn, expandCoo
 import cpp.l1attn_sparse_cpp
 
-debug = True
+debug = False
 
 if debug:
 	batch_size = 1
 	n_heads = 2
 	n_ctx = 3
-	width = 1
+	width = 2
 else: 
 	batch_size = 2
 	n_heads = 3
@@ -74,8 +74,6 @@ if gradcheck(L1AttnSparseFn.apply, variables):
 # non-sparse verification.
 coo, dst_mxlen, src_mxlen = expandCoo(co)
 x3 = cpp.l1attn_sparse_cpp.L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen)
-print('python:',x1)
-print('cpp:',x3)
 assert( torch.allclose(x1, x3) )
     
 variables = [v, q, k, coo, dst_mxlen]
