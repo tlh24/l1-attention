@@ -213,10 +213,10 @@ def expandCoo(co):
 	# that is, all destinations have at least one source.
 	for i in range(dst_max):
 		if i not in dst_cntr:
-			print(f'degenerate sparse head - {i} not written')
+			print(f'Warning: degenerate sparse head - {i} not written')
 	for i in range(src_max):
 		if i not in src_cntr:
-			print(f'degenerate sparse head - {i} not read')
+			print(f'Warning degenerate sparse head - {i} not read')
 	# print('coo', coo)
 	# dst_mxlen and src_mxlen are indexes / add 1 to get the max length.
 	return coo, dst_mxlen+1, src_mxlen+1

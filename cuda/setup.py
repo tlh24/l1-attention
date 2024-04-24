@@ -6,7 +6,7 @@ setup(
     version = '0.1.0',
     py_modules=['l1attn_cuda'],
     ext_modules=[
-        CUDAExtension('l1attn_cuda', [
+        CUDAExtension('l1attn_cuda_drv', [
             'l1attn_cuda_drv.cpp',
             'l1attn_cuda_kernel.cu',],
         extra_compile_args={
