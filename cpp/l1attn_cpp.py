@@ -15,14 +15,14 @@ class L1AttnFunction(Function):
         # bs, n_ctx, n_heads, width = q.shape
         q = q.contiguous(); 
         k = k.contiguous();
-        attn,c = l1attn_cpp.forward(q, k)
+        attn,c = l1attn_drv_cpp.forward(q, k)
         ctx.save_for_backward(q, k, c)
 
         return attn
 
     @staticmethod
     def backward(ctx, d_attn):
-        d_q, d_k = l1attn_cpp.backward(d_attn, *ctx.saved_variables)
+        d_q, d_k = l1attn_drv_cpp.backward(d_attn, *ctx.saved_variables)
         return d_q, d_k
 
 
