@@ -4,9 +4,9 @@ This is a small library that implements L1 attention via Pytorch extensions in C
 Query,Key,Value tensors are assumed to be shaped like `[batch_size, n_tokens, heads, width]`.  
 Dense attention does the (very simple) sum: 
 ```math
-Attention[b,i,j,h] = \sum_k abs(Query[b,i,h,k] - Key[b,j,h,k])
+Attention[b,i,j,h] = - \sum_k abs(Query[b,i,h,k] - Key[b,j,h,k])
 ```
-Attention is therefore the computed as the L1 distance (norm) between queries and keys.  This is pre-softmax.
+Attention is therefore the computed as the L1 distance (norm) between queries and keys.  This is pre-softmax - note the negative, which allows you to pass the resulting attention tensor directly to softmax (see example below). 
 
 In comparison, the more typical dot-product attention: 
 ```math
