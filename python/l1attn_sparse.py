@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 path_root = Path(__file__).parents[0]
 sys.path.append(str(path_root))
-print(sys.path)
+# print(sys.path)
 import l1attn
 
 use_softmax = True
@@ -281,8 +281,8 @@ def sparseNonsparseTest():
 	# compare it with non-sparse L1 attention.
 	m = l1attn.L1Attn()
 	a = m.forward(q, k)
-	a_sm = F.softmax(a, -2)
-	vf = torch.einsum('bhsd, bshw -> bdhw', a_sm, v)
+	a_sm = F.softmax(a, 1)
+	vf = torch.einsum('bsdh, bshw -> bdhw', a_sm, v)
 	print('full / default attn')
 	print('vout', vf)
 	print('diff', vs-vf)

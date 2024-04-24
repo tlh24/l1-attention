@@ -11,8 +11,7 @@ std::vector<torch::Tensor> l1attn_cuda_forward(
 std::vector<torch::Tensor> l1attn_cuda_backward(
     torch::Tensor d_attn,
     torch::Tensor q,
-    torch::Tensor k,
-    torch::Tensor c );
+    torch::Tensor k);
 
 // C++ interface
 
@@ -22,28 +21,26 @@ std::vector<torch::Tensor> l1attn_cuda_backward(
 #define CHECK_INPUT(x) CHECK_CUDA(x); CHECK_CONTIGUOUS(x)
 
 std::vector<torch::Tensor> l1attn_forward(
-    torch::Tensor q,
-    torch::Tensor k ) {
-  CHECK_INPUT(q);
-  CHECK_INPUT(k);
+		torch::Tensor q,
+		torch::Tensor k ) {
+	CHECK_INPUT(q);
+	CHECK_INPUT(k);
 
-  return l1attn_cuda_forward(q, k);
+	return l1attn_cuda_forward(q, k);
 }
 
 std::vector<torch::Tensor> l1attn_backward(
-    torch::Tensor d_attn,
-    torch::Tensor q,
-    torch::Tensor k,
-    torch::Tensor c ) {
-  CHECK_INPUT(d_attn);
-  CHECK_INPUT(q);
-  CHECK_INPUT(k);
-  CHECK_INPUT(c);
-  
-  // std::cout << "l1attn_cuda intermediate tensor c" << std::endl;
-  // std::cout << c << std::endl;
+		torch::Tensor d_attn,
+		torch::Tensor q,
+		torch::Tensor k) {
+	CHECK_INPUT(d_attn);
+	CHECK_INPUT(q);
+	CHECK_INPUT(k);
 
-  return l1attn_cuda_backward(d_attn, q, k, c); 
+	// std::cout << "l1attn_cuda intermediate tensor c" << std::endl;
+	// std::cout << c << std::endl;
+
+	return l1attn_cuda_backward(d_attn, q, k); 
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
