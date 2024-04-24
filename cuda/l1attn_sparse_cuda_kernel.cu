@@ -18,7 +18,7 @@ __global__ void l1attnSparse_fwd_attn_kernel(
 	q,
 	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	k,
-	torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits> 
+	const torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits>
 	coo,
 	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	attn,
@@ -110,11 +110,11 @@ template <typename scalar_t>
 __global__ void l1attnSparse_fwd_vo_kernel(
 	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	v,
-	torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits> 
+	const torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits>
 	coo,
-	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits>
 	attn,
-	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits>
 	vo, 
 	const int bs, const int n_tok, const int n_heads, const int width, 
 	const int cl, const int dst_mxlen)
@@ -146,9 +146,9 @@ __global__ void l1attnSparse_bkwd_dv_dattn_sm_kernel(
 	dvo,
 	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	v,
-	torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits> 
+	const torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits>
 	coo,
-	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits>
 	attn,
 	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	dv,
@@ -175,7 +175,7 @@ __global__ void l1attnSparse_bkwd_dv_dattn_sm_kernel(
 		int dst = coo[c][0]; 
 		int src = coo[c][1]; 
 		int r = coo[c][2]; 
-		int at = attn[b][dst][r][h]; 
+		scalar_t at = attn[b][dst][r][h];
 		
 		// this is the simplest possible version -- 
 		// just use atomic summation to vo, 
@@ -196,9 +196,9 @@ __global__ void l1attnSparse_bkwd_dv_dattn_sm_kernel(
 		acc[tiy][tix] = f; 
 		if(tix < 16) {
 			acc[tiy][tix] += acc[tiy][tix + 16];
-			__syncthreads(); // why is this needed ??? 
+			__syncthreads();
 			acc[tiy][tix] += acc[tiy][tix + 8 ];
-			__syncthreads(); // threads in a warp should be synchronous.
+			__syncthreads();
 			acc[tiy][tix] += acc[tiy][tix + 4 ];
 			__syncthreads();
 			acc[tiy][tix] += acc[tiy][tix + 2 ];
@@ -259,9 +259,9 @@ __global__ void l1attnSparse_bkwd_dq_dk_kernel(
 	q,
 	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	k,
-	torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits> 
+	const torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits>
 	coo,
-	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits>
 	dattn,
 	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	dq,
@@ -321,8 +321,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 
 	const dim3 dimBlocks(32, 8); // x, y, z
 	int n_elements = bs * n_heads * cl;
-	assert((n_elements % 8) == 0); 
-	int n_blocks = n_elements / 8; 
+	int n_blocks = (n_elements + 7) / 8;
 
 	double scale = -1.0 / sqrt(width); 
 		
@@ -390,8 +389,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	
 	const dim3 dimBlocks(32, 8); // x, y, z
 	int n_elements = bs * n_heads * cl;
-	assert((n_elements % 8) == 0); 
-	int n_blocks = n_elements / 8; 
+	int n_blocks = (n_elements + 7) / 8;
 		
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dv_dattn_sm_kernel", ([&] {
 		l1attnSparse_bkwd_dv_dattn_sm_kernel<scalar_t><<<n_blocks, dimBlocks>>>(

@@ -2,22 +2,18 @@ import math
 from torch import nn
 from torch.autograd import Function
 import torch
-import torch.nn.functional as F
-import pdb
-
-import l1attn_sparse_cpp
-
+import l1attn_sparse_cuda
 
 class L1AttnSparseFn(Function):
 	@staticmethod
 	def forward(ctx, v, q, k, coo, dst_mxlen):
 		# bs, n_ctx, n_heads, width = q.shape
-		v = v.contiguous(); 
-		q = q.contiguous(); 
+		v = v.contiguous();
+		q = q.contiguous();
 		k = k.contiguous();
-		vo,attn = l1attn_sparse_cpp.forward(v, q, k, coo, dst_mxlen)
+		vo,attn = l1attn_sparse_cuda.forward(v, q, k, coo, dst_mxlen)
 		ctx.save_for_backward(v, q, k, coo, attn, torch.tensor(dst_mxlen))
-		
+
 		# check that the attention is correct
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0] # tempted to name it cool (coo_length)
@@ -34,7 +30,7 @@ class L1AttnSparseFn(Function):
 			pdb.set_trace()
 			assert(torch.allclose(attnp_sm, attn))
 			print('python:',attnp_sm)
-			print('cpp:',attn)
+			print('cuda:',attn)
 
 		return vo
 
@@ -43,14 +39,14 @@ class L1AttnSparseFn(Function):
 		# dvo is always contiguous?  guess so.
 		v,q,k,coo,attn,dst_mxlen = ctx.saved_tensors[:6]
 		dst_mxlen = dst_mxlen.item()
-		
-		d_v, d_q, d_k = l1attn_sparse_cpp.backward(dvo, v,q,k,coo,attn,dst_mxlen)
+
+		d_v, d_q, d_k = l1attn_sparse_cuda.backward(dvo, v,q,k,coo,attn,dst_mxlen)
 		return d_v, d_q, d_k, None, None
 
 
 class L1AttnSparse(nn.Module):
-	def __init__(self):
-		super(L1AttnSparse, self).__init__()
+    def __init__(self):
+        super(L1AttnSparse, self).__init__()
 
-	def forward(self, q, k):
-		return L1AttnSparseFn.apply(q, k)
+    def forward(self, q, k):
+        return L1AttnSparseFn.apply(q, k)

@@ -3,19 +3,20 @@ import torch
 from torch.autograd import gradcheck
 from python.l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1AttnSparseFn, expandCoo
 import cpp.l1attn_sparse_cpp
+import cuda.l1attn_sparse_cuda
 
 debug = False
 
 if debug:
 	batch_size = 1
-	n_heads = 2
 	n_ctx = 3
+	n_heads = 2
 	width = 2
 else: 
 	batch_size = 2
-	n_heads = 3
-	n_ctx = 4
-	width = 5
+	n_ctx = 3
+	n_heads = 5
+	width = 7
 
 device = torch.device("cpu")
 torch.manual_seed(int(time.time()))
@@ -75,6 +76,14 @@ if gradcheck(L1AttnSparseFn.apply, variables):
 coo, dst_mxlen, src_mxlen = expandCoo(co)
 x3 = cpp.l1attn_sparse_cpp.L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen)
 assert( torch.allclose(x1, x3) )
+print('Forward: Cpp dense Ok')
+
+indx = torch.randperm(co.shape[0])
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+x3 = cpp.l1attn_sparse_cpp.L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen)
+assert( torch.allclose(x1, x3) )
+print('Forward: Cpp dense, permuted Ok')
     
 variables = [v, q, k, coo, dst_mxlen]
 if gradcheck(cpp.l1attn_sparse_cpp.L1AttnSparseFn.apply, variables, nondet_tol=1e-6):
@@ -97,3 +106,51 @@ coo, dst_mxlen, src_mxlen = expandCoo(co2)
 variables = [v, q, k, coo, dst_mxlen]
 if gradcheck(cpp.l1attn_sparse_cpp.L1AttnSparseFn.apply, variables):
 	print('Backward: Cpp grad Ok w/ sparsity + permutation')
+
+## -- CUDA implementation -- ##
+
+cdevice = torch.device("cuda")
+v = v.to(cdevice)
+q = q.to(cdevice)
+k = k.to(cdevice)
+
+# non-sparse verification.
+coo, dst_mxlen, src_mxlen = expandCoo(co)
+coo = coo.to(cdevice)
+x3 = cuda.l1attn_sparse_cuda.L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen)
+x3 = x3.to(device)
+assert( torch.allclose(x1, x3) )
+print('Forward: CUDA dense Ok')
+
+indx = torch.randperm(co.shape[0])
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+coo = coo.to(cdevice)
+x3 = cuda.l1attn_sparse_cuda.L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen)
+x3 = x3.to(device)
+assert( torch.allclose(x1, x3) )
+print('Forward: CUDA dense, permuted Ok')
+
+variables = [v, q, k, coo, dst_mxlen]
+if gradcheck(cuda.l1attn_sparse_cuda.L1AttnSparseFn.apply, variables, nondet_tol=1e-6):
+    print('Backward: CUDA dense grad Ok')
+
+# attention is indexing permutation invariant; check this .
+indx = torch.randperm(co.shape[0])
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+coo = coo.to(cdevice)
+
+variables = [v, q, k, coo, dst_mxlen]
+if gradcheck(cuda.l1attn_sparse_cuda.L1AttnSparseFn.apply, variables, nondet_tol=1e-6):
+	print('Backward: CUDA grad Ok w/ permutation')
+
+# now drop 4 indices, see if it still works.
+indx = indx[0:-4]
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+coo = coo.to(cdevice)
+
+variables = [v, q, k, coo, dst_mxlen]
+if gradcheck(cuda.l1attn_sparse_cuda.L1AttnSparseFn.apply, variables, nondet_tol=1e-6):
+	print('Backward: CUDA grad Ok w/ sparsity + permutation')
