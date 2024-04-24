@@ -261,6 +261,7 @@ def sparseNonsparseTest():
 	k[:,2,:,2] = 2
 
 	v = torch.zeros(batch_size, n_ctx, n_heads, width)
+
 	v[:,0,:,0] = -2
 	v[:,0,:,1] = 2
 	v[:,0,:,2] = 3
