@@ -10,16 +10,21 @@ class L1Attn(torch.nn.Module):
 
 	def forward(self, q, k):
 		bs, n_ctx, n_heads, width = q.shape
-		scale = 1 / math.sqrt(width)
+		scale = -1 / math.sqrt(width)
 
-		qq = q.permute(0, 2, 3, 1).unsqueeze(-2).expand([-1,-1,-1,n_ctx,-1])
-		kk = k.permute(0, 2, 3, 1).unsqueeze(-1).expand([-1,-1,-1,-1,n_ctx])
+		qq = q.unsqueeze(1).expand([-1,n_ctx,-1,-1,-1])
+		kk = k.unsqueeze(2).expand([-1,-1,n_ctx,-1,-1])
 
 		ww = torch.abs(qq - kk)*scale
-		attn = torch.sum(ww, 2) # sum over width
-		attn = 1.0 / (0.001+attn)
-		# k = torch.arange(0,n_ctx)
-		# attn[:,:,k,k] = 0.0; # zero the diagonal
-		# need to test with diagonal on or off
+		attn = torch.sum(ww, -1) # sum over width
+		# dimensions bs, src, dst, heads
+		# NB: must do softmax over second dim:
+		'''
+		m = l1attn.L1Attn()
+		a = m.forward(q, k)
+		a_sm = F.softmax(a, 1)
+		vf = torch.einsum('bsdh, bshw -> bdhw', a_sm, v)
+		# where d = dst, query and s = src, key
+		'''
 
 		return attn
