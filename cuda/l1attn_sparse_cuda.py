@@ -37,7 +37,8 @@ class L1AttnSparseFn(Function):
 
 	@staticmethod
 	def backward(ctx, dvo):
-		# dvo is always contiguous?  guess so.
+		# dvo is always contiguous?  not always! 
+		dvo = dvo.contiguous()
 		v,q,k,coo,attn,dst_mxlen = ctx.saved_tensors[:6]
 		dst_mxlen = dst_mxlen.item()
 
@@ -92,10 +93,8 @@ def expandCoo(co):
 	# that is, all destinations have at least one source.
 	for i in range(dst_max):
 		if i not in dst_cntr:
-			print(f'Warning: degenerate sparse head - {i} not written')
-	for i in range(src_max):
-		if i not in src_cntr:
-			print(f'Warning degenerate sparse head - {i} not read')
+			if i not in src_cntr:
+				print(f'Warning: sparse head - {i} neither read nor written')
 	# print('coo', coo)
 	# dst_mxlen and src_mxlen are indexes / add 1 to get the max length.
 	return coo, dst_mxlen+1, src_mxlen+1

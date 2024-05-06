@@ -1,4 +1,5 @@
 #include <torch/extension.h>
+#include <ATen/native/cuda/KernelUtils.cuh>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -9,7 +10,7 @@ template <typename scalar_t>
 __device__  __forceinline__ scalar_t sign(scalar_t x)
 { 
 	scalar_t t = x < 0 ? -1 : 0;
-	return x > 0 ? 1 : t;
+	return x > 0 ? (scalar_t)1 : t;
 }
 
 template <typename scalar_t>
@@ -107,6 +108,17 @@ __global__ void l1attnSparse_fwd_sm_kernel(
 }
 
 template <typename scalar_t>
+__device__  __forceinline__ void fastAtomicAdd2(
+	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> out, 
+	int i0, int i1, int i2, int i3, scalar_t v)
+{
+	// convenience wrapper function around
+	// fastAtomicAdd for 4-D tensors. 
+	int index = i0*out.stride(0) + i1*out.stride(1) + i2*out.stride(2) + i3*out.stride(3);
+	at::native::fastAtomicAdd(out.data(), index, 1, v, true); 
+}
+
+template <typename scalar_t>
 __global__ void l1attnSparse_fwd_vo_kernel(
 	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	v,
@@ -136,7 +148,8 @@ __global__ void l1attnSparse_fwd_vo_kernel(
 		int src = coo[c][1]; 
 		int r = coo[c][2]; 
 
-		atomicAdd((scalar_t*)&(vo[b][dst][h][w]), attn[b][dst][r][h] * v[b][src][h][w]);
+		// atomicAdd((scalar_t*)&(vo[b][dst][h][w]), attn[b][dst][r][h] * v[b][src][h][w]);
+		fastAtomicAdd2(vo, b,dst,h,w, attn[b][dst][r][h] * v[b][src][h][w]);
 	}
 }
 
@@ -188,7 +201,8 @@ __global__ void l1attnSparse_bkwd_dv_dattn_sm_kernel(
 			int o = w*32+tix; 
 			if(o < width){
 				// calc dv
-				atomicAdd((scalar_t*)&(dv[b][src][h][o]), at * dvo[b][dst][h][o]);
+				// atomicAdd((scalar_t*)&(dv[b][src][h][o]), at * dvo[b][dst][h][o]);
+				fastAtomicAdd2(dv, b,src,h,o, at * dvo[b][dst][h][o]); 
 				// sum dattn_sm
 				f += v[b][src][h][o] * dvo[b][dst][h][o];
 			}
@@ -291,8 +305,10 @@ __global__ void l1attnSparse_bkwd_dq_dk_kernel(
 		
 		scalar_t ws = q[b][dst][h][w] - k[b][src][h][w]; 
 		ws = sign(ws) * scale; 
-		atomicAdd((scalar_t*)&(dq[b][dst][h][w]), ws * dattn[b][dst][r][h]);
-		atomicAdd((scalar_t*)&(dk[b][src][h][w]), -1*ws * dattn[b][dst][r][h]);
+		// atomicAdd((scalar_t*)&(dq[b][dst][h][w]), ws * dattn[b][dst][r][h]);
+		// atomicAdd((scalar_t*)&(dk[b][src][h][w]), -1*ws * dattn[b][dst][r][h]);
+		fastAtomicAdd2(dq, b,dst,h,w, ws * dattn[b][dst][r][h]); 
+		fastAtomicAdd2(dk, b,src,h,w, -1*ws * dattn[b][dst][r][h]); 
 	}
 }
 
@@ -323,9 +339,9 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 	int n_elements = bs * n_heads * cl;
 	int n_blocks = (n_elements + 7) / 8;
 
-	double scale = -1.0 / sqrt(width); 
+	auto scale = -1.0 / sqrt(width); 
 		
-	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_fwd_attn_kernel", ([&] {
+	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_fwd_attn_kernel", ([&] {
 		l1attnSparse_fwd_attn_kernel<scalar_t><<<n_blocks, dimBlocks>>>(
 			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
@@ -338,7 +354,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 	n_elements = bs * n_heads * n_tok; 
 	n_blocks = (n_elements + threads - 1) / threads;
 	
-	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_fwd_sm_kernel", ([&] {
+	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_fwd_sm_kernel", ([&] {
 		l1attnSparse_fwd_sm_kernel<scalar_t><<<n_blocks, threads>>>(
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			bs, n_tok, n_heads, width, cl, dst_mxlen);
@@ -347,7 +363,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 	n_elements = bs * n_heads * cl * width; 
 	n_blocks = (n_elements + threads - 1) / threads;
 	
-	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_fwd_vo_kernel", ([&] {
+	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_fwd_vo_kernel", ([&] {
 		l1attnSparse_fwd_vo_kernel<scalar_t><<<n_blocks, threads>>>(
 			v.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			coo.packed_accessor32<int,2,torch::RestrictPtrTraits>(),
@@ -391,7 +407,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	int n_elements = bs * n_heads * cl;
 	int n_blocks = (n_elements + 7) / 8;
 		
-	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dv_dattn_sm_kernel", ([&] {
+	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_bkwd_dv_dattn_sm_kernel", ([&] {
 		l1attnSparse_bkwd_dv_dattn_sm_kernel<scalar_t><<<n_blocks, dimBlocks>>>(
 			dvo.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			v.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
@@ -406,7 +422,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	n_elements = bs * n_heads * n_tok * dst_mxlen; 
 	n_blocks = (n_elements + threads - 1) / threads;
 	
-	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dattn_kernel", ([&] {
+	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_bkwd_dattn_kernel", ([&] {
 		l1attnSparse_bkwd_dattn_kernel<scalar_t><<<n_blocks, threads>>>(
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			dattn_sm.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
@@ -417,7 +433,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	n_elements = bs * n_heads * cl * width; 
 	n_blocks = (n_elements + threads - 1) / threads;
 	
-	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dq_dk_kernel", ([&] {
+	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_bkwd_dq_dk_kernel", ([&] {
 		l1attnSparse_bkwd_dq_dk_kernel<scalar_t><<<n_blocks, threads>>>(
 			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
