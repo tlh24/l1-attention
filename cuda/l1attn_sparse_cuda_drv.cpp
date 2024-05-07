@@ -1,4 +1,5 @@
 #include <torch/extension.h>
+#include <ATen/native/cuda/KernelUtils.cuh>
 
 #include <vector>
 

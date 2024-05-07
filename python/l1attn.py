@@ -12,8 +12,10 @@ class L1Attn(torch.nn.Module):
 		bs, n_ctx, n_heads, width = q.shape
 		scale = -1 / math.sqrt(width)
 
-		qq = q.unsqueeze(1).expand([-1,n_ctx,-1,-1,-1])
+		qq = q.unsqueeze(1).expand([-1,n_ctx,-1,-1,-1]) 
 		kk = k.unsqueeze(2).expand([-1,-1,n_ctx,-1,-1])
+		# really should switch this to match sparse attention. 
+		# maybe when i have more free time... 
 
 		ww = torch.abs(qq - kk)*scale
 		attn = torch.sum(ww, -1) # sum over width

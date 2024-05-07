@@ -5,7 +5,7 @@ from python.l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1At
 import l1attn_sparse_cpp
 import l1attn_sparse_cuda
 
-debug = False
+debug = True
 
 if debug:
 	batch_size = 1
@@ -21,7 +21,7 @@ else:
 device = torch.device("cpu")
 torch.manual_seed(int(time.time()))
 
-kwargs = {'dtype': torch.float64, 
+kwargs = {'dtype': torch.float64, # get errors with float32.
           'device': device,
           'requires_grad': True}
 
