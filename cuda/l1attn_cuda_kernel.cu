@@ -1,4 +1,5 @@
 #include <torch/extension.h>
+#include <ATen/native/cuda/KernelUtils.cuh>
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -10,6 +11,17 @@ __device__  __forceinline__ scalar_t sign(scalar_t x)
 { 
 	scalar_t t = x < 0 ? -1 : 0;
 	return x > 0 ? 1 : t;
+}
+
+template <typename scalar_t>
+__device__  __forceinline__ void fastAtomicAdd2(
+	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> out, 
+	int i0, int i1, int i2, int i3, scalar_t v)
+{
+	// convenience wrapper function around
+	// fastAtomicAdd for 4-D tensors. 
+	int index = i0*out.stride(0) + i1*out.stride(1) + i2*out.stride(2) + i3*out.stride(3);
+	at::native::fastAtomicAdd(out.data(), index, 1, v, true); 
 }
 
 template <typename scalar_t>
@@ -108,8 +120,10 @@ __global__ void l1attn_cuda_backward_kernel(
 		for(int w = 0; w < width; w++){
 			scalar_t ws = q[b][t][h][w] - k[b][s][h][w];
 			ws = sign(ws) * scale; 
-			atomicAdd((scalar_t*)&(d_q[b][t][h][w]), ws * d_a);
-			atomicAdd((scalar_t*)&(d_k[b][s][h][w]), -1*ws * d_a);
+			// atomicAdd((scalar_t*)&(d_q[b][t][h][w]), ws * d_a);
+			// atomicAdd((scalar_t*)&(d_k[b][s][h][w]), -1*ws * d_a);
+			fastAtomicAdd2(d_q, b,t,h,w, ws * d_a);
+			fastAtomicAdd2(d_k, b,s,h,w, -1*ws * d_a);
 		}
 	}
 } 
