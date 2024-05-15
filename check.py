@@ -2,8 +2,8 @@ import torch
 from torch.autograd import gradcheck
 from python.l1attn import L1Attn
 import python.l1attn_baseline
-import cpp.l1attn_cpp
-import cuda.l1attn_cuda
+import l1attn_cpp # must be installed!
+import l1attn_cuda
 import pdb
 import time
 
@@ -47,10 +47,10 @@ attn_naive = l1a(q,k)
 
 attn_baseline = python.l1attn_baseline.L1AttnFn.apply(*variables)
 
-attn_cpp = cpp.l1attn_cpp.L1AttnFn.apply(*variables)
+attn_cpp = l1attn_cpp.L1AttnFn.apply(*variables)
 
 variables_cuda = [q.cuda(), k.cuda()]
-attn_cuda = cuda.l1attn_cuda.L1AttnFn.apply(*variables_cuda)
+attn_cuda = l1attn_cuda.L1AttnFn.apply(*variables_cuda)
 
 assert(torch.allclose(attn_naive, attn_baseline))
 print('Forward: Baseline vs Naive Ok')
@@ -71,8 +71,8 @@ print('Forward: Cuda vs Naive Ok')
 if gradcheck(python.l1attn_baseline.L1AttnFn.apply, variables):
     print('Backward: Baseline grad Ok')
     
-if gradcheck(cpp.l1attn_cpp.L1AttnFn.apply, variables):
+if gradcheck(l1attn_cpp.L1AttnFn.apply, variables):
    print('Backward: Cpp grad Ok')
 
-if gradcheck(cuda.l1attn_cuda.L1AttnFn.apply, variables_cuda):
+if gradcheck(l1attn_cuda.L1AttnFn.apply, variables_cuda):
    print('Backward: Cuda grad Ok')

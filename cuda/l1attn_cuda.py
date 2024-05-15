@@ -1,7 +1,6 @@
-import math
+import torch
 from torch import nn
 from torch.autograd import Function
-import torch
 # torch must be imported before extension, o/w shared-object links to c10 etc don't work
 import l1attn_cuda_drv
 

@@ -17,6 +17,7 @@ setup(
                     "--expt-extended-lambda",
                     "--use_fast_math",
                     "--ptxas-options=-v", # verbose
+                    # "-D_GLIBCXX_USE_CXX11_ABI=0",
                 ]   
             },
         ),

@@ -77,14 +77,14 @@ __global__ void l1attn_cuda_forward_kernel(
 			acc[tiy][tix] += acc[tiy][tix + 1 ];
 			__syncthreads();
 			if(tix == 0){
-			attn[b][s][t][h] = acc[tiy][tix]; 
+				attn[b][s][t][h] = acc[tiy][tix]; 
 			}
 		}
 	}
 }
 
 template <typename scalar_t>
-__global__ void l1attn_cuda_backward_kernel(
+__global__ void l1attn_cuda_backward_kernel_old(
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 		d_attn,
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
@@ -127,6 +127,103 @@ __global__ void l1attn_cuda_backward_kernel(
 		}
 	}
 } 
+
+template <typename scalar_t>
+__global__ void l1attn_cuda_backward_kernel(
+		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+		d_attn,
+		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+		q,
+		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+		k,
+		torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+		d_q,
+		torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+		d_k,
+		const scalar_t scale, 
+		const int bs, const int n_ctx, const int n_heads, const int width ) 
+{
+	__shared__ scalar_t acc_dq[8][32];
+	__shared__ scalar_t acc_dk[8][32];
+	
+	int tix = threadIdx.x; // [0 .. 31]. 
+	int tiy = threadIdx.y; // [0 .. 7]
+	// tix operates within across the width dimension (reduction dim) 
+	int indx = threadIdx.y + blockIdx.x * 8; // is this right?
+	
+	if(indx < bs*n_ctx*n_heads*width){
+		// again, output indexing b/c thread blocks can't overlap writes.
+		// see note in forward kernel.
+		int j = indx; 
+		int w = j % width; 
+		j /= width; 
+		int h = j % n_heads; 
+		j /= n_heads; 
+		int u = j % n_ctx; // u is t for q, s for k.
+		j /= n_ctx; 
+		int b = j % bs; 
+		
+		int ctx32 = (n_ctx + 31) / 32; 
+		scalar_t dq = 0.0; 
+		scalar_t dk = 0.0; 
+		
+		scalar_t qq = q[b][u][h][w]; 
+		for(int o = 0; o < ctx32; o++) { 
+			int s = o*32+tix; 
+			if(s < n_ctx){
+				scalar_t ws = qq - k[b][s][h][w];
+				ws = sign(ws) * scale; 
+				scalar_t d_a = d_attn[b][s][u][h]; 
+				dq += ws * d_a; 
+			}
+		}
+		
+		scalar_t kk = k[b][u][h][w]; 
+		for(int o = 0; o < ctx32; o++) { 
+			int t = o*32+tix; 
+			if(t < n_ctx){
+				scalar_t ws = q[b][t][h][w] - kk;
+				ws = sign(ws) * scale; 
+				scalar_t d_a = d_attn[b][u][t][h]; 
+				dk += -1.0 * ws * d_a; 
+			}
+		}
+		
+		acc_dq[tiy][tix] = dq;
+		acc_dk[tiy][tix] = dk;
+		if(tix < 16) { 
+			acc_dq[tiy][tix] += acc_dq[tiy][tix + 16];
+			acc_dk[tiy][tix] += acc_dk[tiy][tix + 16];
+			__syncthreads(); // why is this needed ??? 
+			acc_dq[tiy][tix] += acc_dq[tiy][tix + 8 ];
+			acc_dk[tiy][tix] += acc_dk[tiy][tix + 8 ];
+			__syncthreads(); // threads in a warp should be synchronous.
+			acc_dq[tiy][tix] += acc_dq[tiy][tix + 4 ];
+			acc_dk[tiy][tix] += acc_dk[tiy][tix + 4 ];
+			__syncthreads();
+			acc_dq[tiy][tix] += acc_dq[tiy][tix + 2 ];
+			acc_dk[tiy][tix] += acc_dk[tiy][tix + 2 ];
+			__syncthreads();
+			acc_dq[tiy][tix] += acc_dq[tiy][tix + 1 ];
+			acc_dk[tiy][tix] += acc_dk[tiy][tix + 1 ];
+			__syncthreads();
+			if(tix == 0){
+				d_q[b][u][h][w] = acc_dq[tiy][tix];
+				d_k[b][u][h][w] = acc_dk[tiy][tix]; 
+			}
+		}
+		
+		
+		// for(int w = 0; w < width; w++){
+		// 	scalar_t ws = q[b][t][h][w] - k[b][s][h][w];
+		// 	ws = sign(ws) * scale; 
+		// 	// atomicAdd((scalar_t*)&(d_q[b][t][h][w]), ws * d_a);
+		// 	// atomicAdd((scalar_t*)&(d_k[b][s][h][w]), -1*ws * d_a);
+		// 	fastAtomicAdd2(d_q, b,t,h,w, ws * d_a);
+		// 	fastAtomicAdd2(d_k, b,s,h,w, -1*ws * d_a);
+		// }
+	}
+}
 
 std::vector<torch::Tensor> l1attn_cuda_forward(
 		torch::Tensor q,
@@ -176,13 +273,12 @@ std::vector<torch::Tensor> l1attn_cuda_backward(
 	auto d_q = torch::zeros_like(q);
 	auto d_k = torch::zeros_like(k);
 	
-	//calculate d_r. 
-	const int threads = 256; 
-	const int n_elements = bs * n_heads * n_ctx * n_ctx; 
-	int n_blocks = (n_elements + threads - 1) / threads;
+	const dim3 dimBlocks(32, 8); // x, y, z
+	const int n_elements = bs * n_heads * n_ctx * width; 
+	int n_blocks = (n_elements + 7) / 8;
 	
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_backward_kernel", ([&] {
-		l1attn_cuda_backward_kernel<scalar_t><<<n_blocks, threads>>>(
+		l1attn_cuda_backward_kernel<scalar_t><<<n_blocks, dimBlocks>>>(
 			d_attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),

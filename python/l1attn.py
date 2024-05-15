@@ -19,7 +19,7 @@ class L1Attn(torch.nn.Module):
 
 		ww = torch.abs(qq - kk)*scale
 		attn = torch.sum(ww, -1) # sum over width
-		# dimensions bs, src, dst, heads
+		# attn dimensions bs, src, dst, heads
 		# NB: must do softmax over second dim:
 		'''
 		m = l1attn.L1Attn()
