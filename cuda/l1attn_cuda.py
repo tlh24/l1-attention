@@ -16,8 +16,14 @@ class L1AttnFn(Function):
     @staticmethod
     def backward(ctx, d_attn):
         q, k = ctx.saved_variables[:2]
-        d_q, d_k = l1attn_cuda_drv.backward(d_attn, q, k)
-        return d_q, d_k
+        # q & k are bthw & bshw
+        # transpose them so memory access across t,s is coalesced
+        q = q.transpose(1,3).contiguous() # bthw -> bwht
+        k = k.transpose(1,3).contiguous() # bshw -> bwhs
+        d_attnq = d_attn.transpose(1,3).contiguous() # bsth -> bhts
+        d_attnk = d_attn.transpose(2,3).contiguous() # bsth -> bsht
+        d_q, d_k = l1attn_cuda_drv.backward(d_attnq, d_attnk, q, k)
+        return d_q, d_k # output has no transpose; writes can be cached.
 
 
 class L1Attn(nn.Module):

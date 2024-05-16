@@ -5,13 +5,14 @@
 // CUDA forward declarations
 
 std::vector<torch::Tensor> l1attn_cuda_forward(
-    torch::Tensor q,
-    torch::Tensor k );
+		torch::Tensor q,
+		torch::Tensor k );
 
 std::vector<torch::Tensor> l1attn_cuda_backward(
-    torch::Tensor d_attn,
-    torch::Tensor q,
-    torch::Tensor k);
+		torch::Tensor d_attnq,
+		torch::Tensor d_attnk,
+		torch::Tensor q,
+		torch::Tensor k);
 
 // C++ interface
 
@@ -30,17 +31,19 @@ std::vector<torch::Tensor> l1attn_forward(
 }
 
 std::vector<torch::Tensor> l1attn_backward(
-		torch::Tensor d_attn,
+		torch::Tensor d_attnq,
+		torch::Tensor d_attnk,
 		torch::Tensor q,
 		torch::Tensor k) {
-	CHECK_INPUT(d_attn);
+	CHECK_INPUT(d_attnq);
+	CHECK_INPUT(d_attnk);
 	CHECK_INPUT(q);
 	CHECK_INPUT(k);
 
 	// std::cout << "l1attn_cuda intermediate tensor c" << std::endl;
 	// std::cout << c << std::endl;
 
-	return l1attn_cuda_backward(d_attn, q, k); 
+	return l1attn_cuda_backward(d_attnq, d_attnk, q, k); 
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
