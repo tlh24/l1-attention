@@ -58,6 +58,8 @@ print('Forward: Baseline vs Naive Ok')
 assert(torch.allclose(attn_naive, attn_cpp))
 print('Forward: Cpp vs Naive Ok')
 
+# print(attn_naive)
+# print(attn_cuda.cpu())
 assert(torch.allclose(attn_naive, attn_cuda.cpu()))
 print('Forward: Cuda vs Naive Ok')
 
