@@ -44,21 +44,6 @@ __global__ void l1attn_cuda_forward_kernelX(
 	int s = blockIdx.y; 
 	int b = blockIdx.z; 
 	
-	/*
-		// we can permute the order of the output indexing here to improve
-		// memory gather coherency.  
-		// but, because each warp can only write one mem loc, 
-		// it's still a gather operation.
-		// empirical notes: permuting the indexing order did not change speed! 
-		int j = indx; 
-		int h = j % n_heads; 
-		j /= n_heads; 
-		int t = j % n_ctx; 
-		j /= n_ctx; 
-		int s = j % n_ctx; 
-		j /= n_ctx; 
-		int b = j; */
-	
 	int width32 = (width + 31) / 32; 
 	scalar_t f = 0.0; 
 	for(int w = 0; w < width32; w++) { 
@@ -270,12 +255,12 @@ __global__ void l1attn_cuda_backward_kernel16(
 		q,
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 		k,
-		torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> 
+		torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 		d_q,
-		torch::PackedTensorAccessor32<scalar_t,5,torch::RestrictPtrTraits> 
+		torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 		d_k,
 		const scalar_t scale, 
-		const int bs, const int n_ctx, const int n_heads, const int width, const int zwidth) 
+		const int bs, const int n_ctx, const int n_heads, const int width) 
 {
 	// q and k must be bhtw and bhsw respectively
 	// d_attn must be bhts (usually bsth)
@@ -306,7 +291,6 @@ __global__ void l1attn_cuda_backward_kernel16(
 	int cr = tid / 32; // cache r
 	s = sb * BLKSIZ + cr; 
 	t = tb * BLKSIZ + cr; 
-	int z = tb * zwidth + sb; 
 	
 	qc[cr  ][cw] = q[b][h][t][cw]; // each thread reads one fp32
 	qc[cr+8][cw] = q[b][h][t+8][cw];
@@ -326,7 +310,8 @@ __global__ void l1attn_cuda_backward_kernel16(
 			dq += ws * dac[t][s]; 
 		}
 		t = tb * BLKSIZ + r;
-		d_q[b][t][h][z][w] = dq; 
+		//d_q[b][t][h][z][w] = dq; 
+		fastAtomicAdd2( d_q, b,h,t,w, dq ); // ouch. o/w need too much mem.
 	
 		dk = 0.0; 
 		s = r; 
@@ -337,7 +322,8 @@ __global__ void l1attn_cuda_backward_kernel16(
 			dk -= ws * dac[t][s]; 
 		}
 		s = sb * BLKSIZ + r; 
-		d_k[b][s][h][z][w] = dk; 
+		//d_k[b][s][h][z][w] = dk; 
+		fastAtomicAdd2( d_k, b,h,s,w, dk ); 
 	}
 }
 
@@ -465,16 +451,15 @@ std::vector<torch::Tensor> l1attn_cuda_backward16(
 	int width = q.sizes()[3];
 	
 	double scale = -1.0 / sqrt(width);
-	int zwidth = n_ctx / 16; // must be divisible! 
-	int zsize = zwidth * zwidth; 
+	int zwidth = n_ctx / 16; 
 	
 	auto options = torch::TensorOptions()
 		.dtype(q.dtype())
 		.device(q.device())
 		.requires_grad(q.requires_grad());
 	
-	auto d_q = torch::zeros({bs, n_ctx, n_heads, zsize, width}, options);
-	auto d_k = torch::zeros({bs, n_ctx, n_heads, zsize, width}, options);
+	auto d_q = torch::zeros({bs, n_heads, n_ctx, width}, options);
+	auto d_k = torch::zeros({bs, n_heads, n_ctx, width}, options);
 	
 	// const dim3 dimBlocks(32, 8); // x, y, z
 	const dim3 numBlocks(zwidth, zwidth, n_heads*bs); // x, y, z
@@ -485,10 +470,14 @@ std::vector<torch::Tensor> l1attn_cuda_backward16(
 			d_attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-			d_q.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
-			d_k.packed_accessor32<scalar_t,5,torch::RestrictPtrTraits>(),
-			scale, bs, n_ctx, n_heads, width, zwidth);
+			d_q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			d_k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			scale, bs, n_ctx, n_heads, width);
 	}));
 	
-	return {d_q.sum(3), d_k.sum(3)}; // reduce along the zsize dim
+	// bhtw -> bthw -- really need to change everything in the lib! 
+	d_q = d_q.transpose_(1,2).contiguous();
+	d_k = d_k.transpose_(1,2).contiguous(); 
+	
+	return {d_q, d_k}; // reduce along the zsize dim
 }
