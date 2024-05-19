@@ -35,7 +35,6 @@ class L1AttnFn(Function):
 
 		ws = torch.sign(qq - kk)*scale
 
-		# pdb.set_trace()
 		d_q = torch.einsum("bsthw,bsth->bthw", ws, d_attn) # sum over s
 		d_k = torch.einsum("bsthw,bsth->bshw", ws, -1*d_attn) # sum over t index
 

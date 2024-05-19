@@ -12,6 +12,8 @@ setup(
         extra_compile_args={
                 "nvcc": [
                     "-O3",
+                    # "-g",
+                    # "-lineinfo",
                     "-std=c++17",
                     "--expt-relaxed-constexpr",
                     "--expt-extended-lambda",
