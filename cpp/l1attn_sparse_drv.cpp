@@ -62,7 +62,7 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 			}
 			// compute the softmax
 			for(int d = 0; d < n_tok; d++){
-				DTYPE f = 1e-12; 
+				DTYPE f = 1; // denominator bias; was 1e-12;
 				for(int r = 0; r < dst_mxlen; r++)
 					f += exp(attn_acc[b][d][r][h]); 
 				for(int r = 0; r < dst_mxlen; r++)

@@ -46,10 +46,13 @@ class L1AttnSparse(torch.nn.Module):
 		kk = kk[:,:,coo[:,1],:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
-		attn = torch.ones(bs, n_heads, n_tok, dst_mxlen, device=q.device, dtype=q.dtype)*-1e12 # -infty
+		attn = torch.ones(bs, n_heads, n_tok, dst_mxlen+1, device=q.device, dtype=q.dtype)*-1e12 # -infty
 		attn[:,:,coo[:,0], coo[:,2]] = ww[:,:,0:cl] # scatter op
 		if use_softmax:
+			attn[:,:,:,-1] = 0; # noop attention; e^0=1, add to denom
 			attn_sm = F.softmax(attn, -1)
+			attn_sm = attn_sm[:,:,:,:-1]
+			# print(attn_sm)
 		else:
 			attn_sm = attn
 		vw = torch.zeros(bs, n_heads, n_tok, dst_mxlen, width, device=q.device, dtype=q.dtype)
@@ -89,11 +92,14 @@ class L1AttnSparseFn(Function):
 		kk = k[:,coo[:,1],:,:] # broadcast src to cl
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
 		ww = torch.sum(torch.abs(qq - kk), -1)*scale
-		attn = torch.ones((bs, n_tok, dst_mxlen, n_heads),\
+		attn = torch.ones((bs, n_tok, dst_mxlen+1, n_heads),\
 			device=q.device, dtype=q.dtype)*-1e12 # -infty
 		attn[:,coo[:,0],coo[:,2],:] = ww[:,0:cl,:] # scatter op
 		if use_softmax:
+			attn[:,:,-1,:] = 0; # noop attention; e^0=1, add to denominator
 			attn_sm = F.softmax(attn, 2)
+			attn_sm = attn_sm[:,:,:-1,:]
+			# print(attn_sm.transpose(1,3).transpose(2,3)) #btdh -> bhdt -> bhtd
 		else:
 			attn_sm = attn
 		vw = torch.zeros((bs, n_tok, dst_mxlen, n_heads, width),\
@@ -130,6 +136,7 @@ class L1AttnSparseFn(Function):
 		dattn_sm = torch.einsum("bdrhw, bdhw -> bdrh ", vw, dvo)
 
 		# calculate the jacobian of the softmax
+		# this is not affected by adding one to the denominator!
 		if use_softmax:
 			# outer product
 			j = -1*torch.einsum("bdrh, bdqh -> bdrqh", attn_sm, attn_sm)
@@ -282,7 +289,11 @@ def sparseNonsparseTest():
 	# compare it with non-sparse L1 attention.
 	m = l1attn.L1Attn()
 	a = m.forward(q, k)
-	a_sm = F.softmax(a, 1)
+	# add in denominator
+	ap = torch.zeros(batch_size, n_ctx+1, n_ctx+1, n_heads)
+	ap[:,:-1,:-1,:] = a
+	a_sm = F.softmax(ap, 1)
+	a_sm = a_sm[:,:-1,:-1,:] # strip e^0=1
 	vf = torch.einsum('bsdh, bshw -> bdhw', a_sm, v)
 	print('full / default attn')
 	print('vout', vf)
