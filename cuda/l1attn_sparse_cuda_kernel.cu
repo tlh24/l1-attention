@@ -96,7 +96,7 @@ __global__ void l1attnSparse_fwd_sm_kernel(
 		// this avoids race cases as each thread operates in-place,
 		// on one row by itself.
 		
-		scalar_t f = 1e-12; 
+		scalar_t f = 1; // denominator; was 1e-12;
 		for(int r = 0; r < dst_mxlen; r++){
 			f += exp(attn[b][d][r][h]);
 		}

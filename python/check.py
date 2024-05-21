@@ -3,7 +3,7 @@ import torch
 from torch.autograd import gradcheck
 from l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1AttnSparseFn, expandCoo
 
-if True:
+if False:
     batch_size = 2
     n_heads = 3
     n_ctx = 4
@@ -39,6 +39,8 @@ coo, dst_mxlen, src_mxlen = expandCoo(co)
 m1 = L1AttnSparse()
 x1 = m1.forward(v, q, k, coo, dst_mxlen, src_mxlen)
 x2 = L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen, src_mxlen)
+# print(x1)
+# print(x2)
 assert( torch.allclose(x1, x2) )
 
 variables = [v, q, k, coo, dst_mxlen, src_mxlen]
