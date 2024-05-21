@@ -51,8 +51,8 @@ class L1AttnSparse(torch.nn.Module):
 		if use_softmax:
 			attn[:,:,:,-1] = 0; # noop attention; e^0=1, add to denom
 			attn_sm = F.softmax(attn, -1)
+			# print(attn_sm) # check the noop!
 			attn_sm = attn_sm[:,:,:,:-1]
-			# print(attn_sm)
 		else:
 			attn_sm = attn
 		vw = torch.zeros(bs, n_heads, n_tok, dst_mxlen, width, device=q.device, dtype=q.dtype)
