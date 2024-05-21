@@ -3,7 +3,7 @@ import torch
 from torch.autograd import gradcheck
 from l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1AttnSparseFn, expandCoo
 
-if False:
+if True:
     batch_size = 2
     n_heads = 3
     n_ctx = 4
