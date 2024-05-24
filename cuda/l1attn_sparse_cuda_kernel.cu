@@ -334,7 +334,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 
 	auto attn = torch::ones({bs, n_tok, dst_mxlen, n_heads}, options);
 	attn = attn * -1e12; // -infty
-	auto vo = torch::zeros({bs, n_tok, n_heads, width}, options);
+	auto vo = torch::zeros({bs, n_tok, n_heads, v_width}, options);
 
 	const dim3 dimBlocks(32, 8); // x, y, z
 	int n_elements = bs * n_heads * cl;
