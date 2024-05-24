@@ -128,16 +128,16 @@ __global__ void l1attnSparse_fwd_vo_kernel(
 	attn,
 	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits>
 	vo, 
-	const int bs, const int n_tok, const int n_heads, const int width, 
+	const int bs, const int n_tok, const int n_heads, const int v_width, 
 	const int cl, const int dst_mxlen)
 {
 	// 1D threads and blocks.
 	int indx = threadIdx.x + blockIdx.x * blockDim.x;
 
-	if(indx < bs*n_heads*cl*width){
+	if(indx < bs*n_heads*cl*v_width){
 		int j = indx; 
-		int w = j % width; 
-		j /= width; 
+		int w = j % v_width; 
+		j /= v_width; 
 		int h = j % n_heads; 
 		j /= n_heads; 
 		int b = j % bs; 
@@ -167,7 +167,7 @@ __global__ void l1attnSparse_bkwd_dv_dattn_sm_kernel(
 	dv,
 	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 	dattn_sm,
-	const int bs, const int n_tok, const int n_heads, const int width, 
+	const int bs, const int n_tok, const int n_heads, const int v_width, 
 	const int cl, const int dst_mxlen)
 {
 	__shared__ scalar_t acc[8][32];
@@ -195,11 +195,11 @@ __global__ void l1attnSparse_bkwd_dv_dattn_sm_kernel(
 		// same as the C++ version.
 		// each thread reads attn, dvo & writes dv, dattn_sm
 		
-		int width32 = (width + 31) / 32; 
+		int width32 = (v_width + 31) / 32; 
 		scalar_t f = 0.0; 
 		for(int w = 0; w < width32; w++) { 
 			int o = w*32+tix; 
-			if(o < width){
+			if(o < v_width){
 				// calc dv
 				// atomicAdd((scalar_t*)&(dv[b][src][h][o]), at * dvo[b][dst][h][o]);
 				fastAtomicAdd2(dv, b,src,h,o, at * dvo[b][dst][h][o]); 
@@ -324,6 +324,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 	int n_tok = q.sizes()[1];
 	int n_heads = q.sizes()[2]; 
 	int width = q.sizes()[3];
+	int v_width = v.sizes()[3]; 
 	int cl = coo.sizes()[0];
 
 	auto options = torch::TensorOptions()
@@ -360,7 +361,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 			bs, n_tok, n_heads, width, cl, dst_mxlen);
 	}));
 	
-	n_elements = bs * n_heads * cl * width; 
+	n_elements = bs * n_heads * cl * v_width; 
 	n_blocks = (n_elements + threads - 1) / threads;
 	
 	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_fwd_vo_kernel", ([&] {
@@ -369,7 +370,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 			coo.packed_accessor32<int,2,torch::RestrictPtrTraits>(),
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			vo.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-			bs, n_tok, n_heads, width, cl, dst_mxlen);
+			bs, n_tok, n_heads, v_width, cl, dst_mxlen);
 	}));
 
 	return {vo, attn};
@@ -388,6 +389,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	int n_tok = q.sizes()[1]; 
 	int n_heads = q.sizes()[2]; 
 	int width = q.sizes()[3]; 
+	int v_width = v.sizes()[3]; 
 	int cl = coo.sizes()[0];
 
 	auto scale = -1.0 / sqrt(width); 
@@ -397,7 +399,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 		.device(q.device())
 		.requires_grad(q.requires_grad()); 
 	
-	auto dv = torch::zeros({bs, n_tok, n_heads, width}, options);
+	auto dv = torch::zeros({bs, n_tok, n_heads, v_width}, options);
 	auto dq = torch::zeros({bs, n_tok, n_heads, width}, options);
 	auto dk = torch::zeros({bs, n_tok, n_heads, width}, options);
 	auto dattn_sm = torch::zeros({bs, n_tok, dst_mxlen, n_heads}, options);
@@ -415,7 +417,7 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			dv.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			dattn_sm.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
-			bs, n_tok, n_heads, width, cl, dst_mxlen);
+			bs, n_tok, n_heads, v_width, cl, dst_mxlen);
 	}));
 	
 	const int threads = 256; 
