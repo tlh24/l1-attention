@@ -12,14 +12,12 @@ sys.path.append(str(path_root))
 # print(sys.path)
 import l1attn
 
-use_softmax = True
-
 class L1AttnSparse(torch.nn.Module):
 	def __init__(self):
 		super(L1AttnSparse, self).__init__()
 		# there are no parameters, deterministic mapping
 
-	def forward(self, v, q, k, coo, dst_mxlen, src_mxlen):
+	def forward(self, v, q, k, coo, dst_mxlen, src_mxlen, use_softmax):
 		'''
 		q, k, v are the usual dense tensors 
 			shape [batch_size, n_tok, n_heads, width]
@@ -52,9 +50,9 @@ class L1AttnSparse(torch.nn.Module):
 			attn[:,:,:,-1] = 0; # noop attention; e^0=1, add to denom
 			attn_sm = F.softmax(attn, -1)
 			# print(attn_sm) # check the noop!
-			attn_sm = attn_sm[:,:,:,:-1]
 		else:
-			attn_sm = attn
+			attn_sm = torch.exp(attn)
+		attn_sm = attn_sm[:,:,:,:-1]
 		vw = torch.zeros(bs, n_heads, n_tok, dst_mxlen, width, device=q.device, dtype=q.dtype)
 		vw[:,:,coo[:,0],coo[:,2],:] = vv[:,:,coo[:,1],:]
 		vo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vw) # sum over src
@@ -64,7 +62,7 @@ class L1AttnSparse(torch.nn.Module):
 
 class L1AttnSparseFn(Function):
 	@staticmethod
-	def forward(ctx, v, q, k, coo, dst_mxlen, src_mxlen):
+	def forward(ctx, v, q, k, coo, dst_mxlen, src_mxlen, use_softmax):
 		'''
 		q, k, v are the usual dense tensors
 			shape [batch_size, n_tok, n_heads, width]
@@ -98,25 +96,26 @@ class L1AttnSparseFn(Function):
 		if use_softmax:
 			attn[:,:,-1,:] = 0; # noop attention; e^0=1, add to denominator
 			attn_sm = F.softmax(attn, 2)
-			attn_sm = attn_sm[:,:,:-1,:]
 			# print(attn_sm.transpose(1,3).transpose(2,3)) #btdh -> bhdt -> bhtd
 		else:
-			attn_sm = attn
+			attn_sm = torch.exp(attn)
+		attn_sm = attn_sm[:,:,:-1,:]
 		vw = torch.zeros((bs, n_tok, dst_mxlen, n_heads, width),\
 			device=q.device, dtype=q.dtype) # uff, large matrix
 		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
 		vo = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, vw) # sum over src
 
 		ctx.save_for_backward(v, q, k, attn_sm, coo, \
-			torch.tensor(dst_mxlen), torch.tensor(src_mxlen))
+			torch.tensor(dst_mxlen), torch.tensor(src_mxlen), torch.tensor(use_softmax))
 
 		return vo
 
 	@staticmethod
 	def backward(ctx, dvo):
-		v,q,k,attn_sm,coo,dst_mxlen,src_mxlen = ctx.saved_tensors[:7]
+		v,q,k,attn_sm,coo,dst_mxlen,src_mxlen,use_softmax = ctx.saved_tensors[:8]
 		dst_mxlen = dst_mxlen.item()
 		src_mxlen = src_mxlen.item()
+		use_softmax = use_softmax.item()
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0]
 
@@ -145,7 +144,7 @@ class L1AttnSparseFn(Function):
 			j[:,:,i,i,:] = diag[:,:,i,:]
 			dattn = torch.einsum("bdrqh, bdrh -> bdqh", j, dattn_sm)
 		else:
-			dattn = dattn_sm
+			dattn = attn_sm * dattn_sm
 
 		# recreate qq,kk broadcasts.
 		qq = q[:,coo[:,0],:,:] # bchw
@@ -164,7 +163,7 @@ class L1AttnSparseFn(Function):
 		dq = torch.einsum("bdrhw, bdrh -> bdhw", wsq, dattn)
 		dk = torch.einsum("bsrhw, bsrh -> bshw", wsk, -1*dattn_k)
 
-		return dv, dq, dk, None, None, None
+		return dv, dq, dk, None, None, None, None
 
 class LinFun(Function):
 	# make sure I understand the dumb simple case.
@@ -228,10 +227,14 @@ def expandCoo(co):
 	# dst_mxlen and src_mxlen are indexes / add 1 to get the max length.
 	return coo, dst_mxlen+1, src_mxlen+1
 
-def testL1AttnSparse(q, k, v, co):
+def testL1AttnSparse(q, k, v, co, use_softmax):
 	coo, dst_mxlen, src_mxlen = expandCoo(co)
 	m = L1AttnSparse()
-	vout = m(v, q, k, coo, dst_mxlen, src_mxlen)
+	vout = m(v, q, k, coo, dst_mxlen, src_mxlen, use_softmax)
+	if use_softmax: 
+		print("softmax on")
+	else:
+		print("softmax off")
 	print('q', torch.squeeze(q))
 	print('k', torch.squeeze(k))
 	print('v', torch.squeeze(v))
@@ -239,7 +242,7 @@ def testL1AttnSparse(q, k, v, co):
 	print('vout', torch.squeeze(vout))
 	return vout
 
-def sparseNonsparseTest():
+def sparseNonsparseTest(use_softmax):
 	batch_size = 1
 	n_ctx = 3
 	n_heads = 1
@@ -281,18 +284,21 @@ def sparseNonsparseTest():
 
 	co = torch.tensor([[0,0],[0,1],[1,0],[1,1],[2,2]])
 
-	testL1AttnSparse(q, k, v, co)
+	testL1AttnSparse(q, k, v, co, use_softmax)
 
 	# try full non-sparse attention
 	co = torch.tensor([[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]])
-	vs = testL1AttnSparse(q, k, v, co)
+	vs = testL1AttnSparse(q, k, v, co, use_softmax)
 	# compare it with non-sparse L1 attention.
 	m = l1attn.L1Attn()
 	a = m.forward(q, k)
 	# add in denominator
 	ap = torch.zeros(batch_size, n_ctx+1, n_ctx+1, n_heads)
 	ap[:,:-1,:-1,:] = a
-	a_sm = F.softmax(ap, 1)
+	if use_softmax: 
+		a_sm = F.softmax(ap, 1)
+	else:
+		a_sm = torch.exp(ap)
 	a_sm = a_sm[:,:-1,:-1,:] # strip e^0=1
 	vf = torch.einsum('bsdh, bshw -> bdhw', a_sm, v)
 	print('full / default attn')
@@ -303,11 +309,12 @@ def sparseNonsparseTest():
 	# same thing, but permute the coo vector
 	indx = torch.randperm(co.shape[0])
 	co = co[indx, :]
-	vs = testL1AttnSparse(q, k, v, co)
+	vs = testL1AttnSparse(q, k, v, co, use_softmax)
 	assert torch.allclose(vs, vf)
 
 	print('l1attn_sparse.py assertions passed')
 
 if __name__ == "__main__":
-	sparseNonsparseTest()
+	sparseNonsparseTest(True)
+	sparseNonsparseTest(False)
 

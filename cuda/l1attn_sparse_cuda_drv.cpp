@@ -9,7 +9,8 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 	torch::Tensor q,
 	torch::Tensor k,
 	torch::Tensor coo,
-	int dst_mxlen );
+	int dst_mxlen, 
+	bool use_softmax );
 
 std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	torch::Tensor dvo,
@@ -18,7 +19,8 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	torch::Tensor k,
 	torch::Tensor coo,
 	torch::Tensor attn,
-	int dst_mxlen );
+	int dst_mxlen, 
+	bool use_softmax );
 
 // C++ interface
 
@@ -32,14 +34,15 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 		torch::Tensor q,
 		torch::Tensor k,
 		torch::Tensor coo,
-		int dst_mxlen ) 
+		int dst_mxlen, 
+		bool use_softmax) 
 {
 	CHECK_INPUT(v);
 	CHECK_INPUT(q);
 	CHECK_INPUT(k);
 	CHECK_INPUT(coo);
 
-	return l1attnSparse_cuda_forward(v, q, k, coo, dst_mxlen);
+	return l1attnSparse_cuda_forward(v, q, k, coo, dst_mxlen, use_softmax);
 }
 
 std::vector<torch::Tensor> l1attnSparse_backward(
@@ -49,7 +52,8 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 		torch::Tensor k,
 		torch::Tensor coo,
 		torch::Tensor attn,
-		int dst_mxlen ) 
+		int dst_mxlen, 
+		bool use_softmax) 
 {
 	CHECK_INPUT(dvo);
 	CHECK_INPUT(v);
@@ -61,7 +65,7 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 	// std::cout << "l1attn_cuda intermediate tensor c" << std::endl;
 	// std::cout << c << std::endl;
 
-	return l1attnSparse_cuda_backward(dvo, v, q, k, coo, attn, dst_mxlen); 
+	return l1attnSparse_cuda_backward(dvo, v, q, k, coo, attn, dst_mxlen, use_softmax); 
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

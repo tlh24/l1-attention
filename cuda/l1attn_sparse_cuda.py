@@ -7,13 +7,13 @@ import l1attn_sparse_cuda_drv
 
 class L1AttnSparseFn(Function):
 	@staticmethod
-	def forward(ctx, v, q, k, coo, dst_mxlen):
+	def forward(ctx, v, q, k, coo, dst_mxlen, use_softmax):
 		# bs, n_ctx, n_heads, width = q.shape
 		v = v.contiguous();
 		q = q.contiguous();
 		k = k.contiguous();
-		vo,attn = l1attn_sparse_cuda_drv.forward(v, q, k, coo, dst_mxlen)
-		ctx.save_for_backward(v, q, k, coo, attn, torch.tensor(dst_mxlen))
+		vo,attn = l1attn_sparse_cuda_drv.forward(v, q, k, coo, dst_mxlen, use_softmax)
+		ctx.save_for_backward(v, q, k, coo, attn, torch.tensor(dst_mxlen), torch.tensor(use_softmax))
 
 		# check that the attention is correct
 		bs, n_tok, n_heads, width = q.shape
@@ -39,19 +39,20 @@ class L1AttnSparseFn(Function):
 	def backward(ctx, dvo):
 		# dvo is always contiguous?  not always! 
 		dvo = dvo.contiguous()
-		v,q,k,coo,attn,dst_mxlen = ctx.saved_tensors[:6]
+		v,q,k,coo,attn,dst_mxlen,use_softmax = ctx.saved_tensors[:7]
 		dst_mxlen = dst_mxlen.item()
+		use_softmax = use_softmax.item()
 
-		d_v, d_q, d_k = l1attn_sparse_cuda_drv.backward(dvo, v,q,k,coo,attn,dst_mxlen)
-		return d_v, d_q, d_k, None, None
+		d_v, d_q, d_k = l1attn_sparse_cuda_drv.backward(dvo, v,q,k,coo,attn,dst_mxlen,use_softmax)
+		return d_v, d_q, d_k, None, None, None
 
 
 class L1AttnSparse(nn.Module):
     def __init__(self):
         super(L1AttnSparse, self).__init__()
 
-    def forward(self, v, q, k, coo, dst_mxlen):
-        return L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen)
+    def forward(self, v, q, k, coo, dst_mxlen, use_softmax):
+        return L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen, use_softmax)
 	  
 	  
 def expandCoo(co):

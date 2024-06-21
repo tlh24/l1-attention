@@ -15,7 +15,8 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 		torch::Tensor q,
 		torch::Tensor k,
 		torch::Tensor coo,
-		int dst_mxlen ) 
+		int dst_mxlen, 
+		bool use_softmax) 
 {
 	// don't permute the variables like in python. 
 	int bs = q.sizes()[0]; 
@@ -60,13 +61,20 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 				f *= scale;
 				attn_acc[b][dst][r][h] = f; 
 			}
-			// compute the softmax
-			for(int d = 0; d < n_tok; d++){
-				DTYPE f = 1; // denominator bias; was 1e-12;
-				for(int r = 0; r < dst_mxlen; r++)
-					f += exp(attn_acc[b][d][r][h]); 
-				for(int r = 0; r < dst_mxlen; r++)
-					attn_acc[b][d][r][h] = exp(attn_acc[b][d][r][h]) / f; 
+			if(use_softmax){ 
+				// compute the softmax
+				for(int d = 0; d < n_tok; d++){
+					DTYPE f = 1; // denominator bias; was 1e-12;
+					for(int r = 0; r < dst_mxlen; r++)
+						f += exp(attn_acc[b][d][r][h]); 
+					for(int r = 0; r < dst_mxlen; r++)
+						attn_acc[b][d][r][h] = exp(attn_acc[b][d][r][h]) / f; 
+				}
+			} else {
+				for(int d = 0; d < n_tok; d++){
+					for(int r = 0; r < dst_mxlen; r++)
+						attn_acc[b][d][r][h] = exp(attn_acc[b][d][r][h]); 
+				}
 			}
 			// compute vo
 			for(int c = 0; c < cl; c++){
@@ -90,7 +98,8 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 		torch::Tensor k,
 		torch::Tensor coo,
 		torch::Tensor attn,
-		int dst_mxlen ) 
+		int dst_mxlen,
+		bool use_softmax) 
 {
 	int bs = q.sizes()[0]; 
 	int n_tok = q.sizes()[1]; 
@@ -141,16 +150,25 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 						v_acc[b][src][h][w] * dvo_acc[b][dst][h][w];
 				}
 			}
-			// multiply dattn_sm by sm jacobian (without allocating it)
-			for(int d = 0; d < n_tok; d++){
-				for(int r = 0; r < dst_mxlen; r++){
-					for(int q = 0; q < dst_mxlen; q++){
-						DTYPE f = 0.0; 
-						if(r == q)
-							f = attn_acc[b][d][r][h] * (1-attn_acc[b][d][r][h]); 
-						else
-							f = -1 * attn_acc[b][d][r][h] * attn_acc[b][d][q][h]; 
-						dattn_acc[b][d][r][h] += f * dattn_sm_acc[b][d][q][h];
+			if(use_softmax){
+				// multiply dattn_sm by sm jacobian (without allocating it)
+				for(int d = 0; d < n_tok; d++){
+					for(int r = 0; r < dst_mxlen; r++){
+						for(int q = 0; q < dst_mxlen; q++){
+							DTYPE f = 0.0; 
+							if(r == q)
+								f = attn_acc[b][d][r][h] * (1-attn_acc[b][d][r][h]); 
+							else
+								f = -1 * attn_acc[b][d][r][h] * attn_acc[b][d][q][h]; 
+							dattn_acc[b][d][r][h] += f * dattn_sm_acc[b][d][q][h];
+						}
+					}
+				}
+			} else {
+				for(int d = 0; d < n_tok; d++){
+					for(int r = 0; r < dst_mxlen; r++){
+						dattn_acc[b][d][r][h] += 
+							attn_acc[b][d][r][h] * dattn_sm_acc[b][d][r][h];
 					}
 				}
 			}
