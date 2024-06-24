@@ -35,12 +35,12 @@ __global__ void l1attn_cuda_forward_kernelX(
 		const scalar_t scale, 
 		const int bs, const int n_ctx, const int n_heads, const int width)
 {
-	__shared__ scalar_t acc[8][32];
+	__shared__ scalar_t acc[32];
 	
 	int tix = threadIdx.x; // [0 .. 31]. 
-	int h = threadIdx.y; // n_heads
 	// tix operates within across the width dimension (reduction dim) 
-	int t = blockIdx.x; 
+	int h = blockIdx.x % n_heads; 
+	int t = blockIdx.x / n_heads; 
 	int s = blockIdx.y; 
 	int b = blockIdx.z; 
 	
@@ -51,20 +51,20 @@ __global__ void l1attn_cuda_forward_kernelX(
 		if(o < width)
 			f += abs(q[b][t][h][o] - k[b][s][h][o]); 
 	}
-	acc[h][tix] = f * scale; 
+	acc[tix] = f * scale; 
 	if(tix < 16) { 
-		acc[h][tix] += acc[h][tix + 16];
+		acc[tix] += acc[tix + 16];
 		__syncthreads(); // why is this needed ??? 
-		acc[h][tix] += acc[h][tix + 8 ];
+		acc[tix] += acc[tix + 8 ];
 		__syncthreads(); // threads in a warp should be synchronous.
-		acc[h][tix] += acc[h][tix + 4 ];
+		acc[tix] += acc[tix + 4 ];
 		__syncthreads(); // experiment: it's totally needed! 
-		acc[h][tix] += acc[h][tix + 2 ];
+		acc[tix] += acc[tix + 2 ];
 		__syncthreads();
-		acc[h][tix] += acc[h][tix + 1 ];
+		acc[tix] += acc[tix + 1 ];
 		__syncthreads();
 		if(tix == 0){
-			attn[b][s][t][h] = acc[h][tix]; 
+			attn[b][s][t][h] = acc[tix]; 
 		}
 	}
 }
@@ -186,12 +186,12 @@ __global__ void l1attn_cuda_backward_kernel(
 		const scalar_t scale, 
 		const int bs, const int n_ctx, const int n_heads, const int width ) 
 {
-	__shared__ scalar_t acc_dq[8][32];
-	__shared__ scalar_t acc_dk[8][32];
+	__shared__ scalar_t acc_dq[32];
+	__shared__ scalar_t acc_dk[32];
 	
 	int tix = threadIdx.x; // [0 .. 31].
-	int h = threadIdx.y; // n_heads
-	int r = blockIdx.x; // r is t for q, s for k.
+	int h = blockIdx.x % n_heads; 
+	int r = blockIdx.x / n_heads; // r is t for q, s for k.
 	int w = blockIdx.y; 
 	int b = blockIdx.z; 
 		
@@ -222,27 +222,27 @@ __global__ void l1attn_cuda_backward_kernel(
 		}
 	}
 	
-	acc_dq[h][tix] = dq;
-	acc_dk[h][tix] = dk;
+	acc_dq[tix] = dq;
+	acc_dk[tix] = dk;
 	if(tix < 16) { 
-		acc_dq[h][tix] += acc_dq[h][tix + 16];
-		acc_dk[h][tix] += acc_dk[h][tix + 16];
+		acc_dq[tix] += acc_dq[tix + 16];
+		acc_dk[tix] += acc_dk[tix + 16];
 		__syncthreads(); 
-		acc_dq[h][tix] += acc_dq[h][tix + 8 ];
-		acc_dk[h][tix] += acc_dk[h][tix + 8 ];
+		acc_dq[tix] += acc_dq[tix + 8 ];
+		acc_dk[tix] += acc_dk[tix + 8 ];
 		__syncthreads(); 
-		acc_dq[h][tix] += acc_dq[h][tix + 4 ];
-		acc_dk[h][tix] += acc_dk[h][tix + 4 ];
+		acc_dq[tix] += acc_dq[tix + 4 ];
+		acc_dk[tix] += acc_dk[tix + 4 ];
 		__syncthreads();
-		acc_dq[h][tix] += acc_dq[h][tix + 2 ];
-		acc_dk[h][tix] += acc_dk[h][tix + 2 ];
+		acc_dq[tix] += acc_dq[tix + 2 ];
+		acc_dk[tix] += acc_dk[tix + 2 ];
 		__syncthreads();
-		acc_dq[h][tix] += acc_dq[h][tix + 1 ];
-		acc_dk[h][tix] += acc_dk[h][tix + 1 ];
+		acc_dq[tix] += acc_dq[tix + 1 ];
+		acc_dk[tix] += acc_dk[tix + 1 ];
 		__syncthreads();
 		if(tix == 0){
-			d_q[b][r][h][w] = acc_dq[h][tix];
-			d_k[b][r][h][w] = acc_dk[h][tix]; 
+			d_q[b][r][h][w] = acc_dq[tix];
+			d_k[b][r][h][w] = acc_dk[tix]; 
 		}
 	}
 }
@@ -343,12 +343,8 @@ std::vector<torch::Tensor> l1attn_cuda_forward(
 	
 	auto attn = torch::zeros({bs, n_ctx, n_ctx, n_heads}, options); 
 	
-	const dim3 numBlocks(n_ctx, n_ctx, bs); // x, y, z
-	// const int n_elements = bs * n_heads * n_ctx * n_ctx; 
-	// int n_blocks = (n_elements + 7) / 8;
-	// int n_blocks = n_elements;
-	// int n_threads = 32;
-	const dim3 threadsPerBlock(32, n_heads, 1);
+	const dim3 numBlocks(n_heads*n_ctx, n_ctx, bs); // x, y, z
+	const dim3 threadsPerBlock(32, 1, 1);
 	
 	double scale = -1.0 / sqrt(width); 
 		
@@ -419,12 +415,8 @@ std::vector<torch::Tensor> l1attn_cuda_backward(
 	auto d_q = torch::zeros({bs, n_ctx, n_heads, width}, options);
 	auto d_k = torch::zeros({bs, n_ctx, n_heads, width}, options);
 	
-	// const dim3 dimBlocks(32, 8); // x, y, z
-	const dim3 numBlocks(n_ctx, width, bs); // x, y, z
-	const dim3 threadsPerBlock(32, n_heads, 1);
-	// const int n_elements = bs * n_heads * n_ctx * width; 
-	// int n_blocks = n_elements;
-	// int n_threads = 32;
+	const dim3 numBlocks(n_heads*n_ctx, width, bs); // x, y, z
+	const dim3 threadsPerBlock(32, 1, 1);
 	
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_backward_kernel", ([&] {
 		l1attn_cuda_backward_kernel<scalar_t><<<numBlocks, threadsPerBlock>>>(

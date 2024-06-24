@@ -15,7 +15,7 @@ if debug:
 else: 
 	batch_size = 2
 	n_ctx = 3
-	n_heads = 5
+	n_heads = 16
 	width = 7
 
 device = torch.device("cpu")

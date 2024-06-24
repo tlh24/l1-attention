@@ -8,7 +8,6 @@ class L1AttnFn(Function):
 	@staticmethod
 	def forward(ctx, q, k):
 		n_heads = q.shape[2]
-		assert(n_heads <= 16) # for thread indexing. 
 		q = q.contiguous(); 
 		k = k.contiguous();
 		attn = l1attn_cuda_drv.forward(q, k)
@@ -19,7 +18,6 @@ class L1AttnFn(Function):
 	def backward(ctx, d_attn):
 		q, k = ctx.saved_variables[:2]
 		n_heads = q.shape[2]
-		assert(n_heads <= 16) # for thread indexing. 
 		# q & k are bthw & bshw
 		# transpose in C++ driver
 		d_q, d_k = l1attn_cuda_drv.backward(d_attn, q, k)

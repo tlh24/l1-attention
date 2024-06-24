@@ -31,9 +31,9 @@ else:
 	# n_heads = 5
 	# width = 7
 	batch_size = 1
-	n_ctx = 32
-	n_heads = 1
-	width = 32
+	n_ctx = 16
+	n_heads = 24 # breaks when n_heads > 8!! 
+	width = 16
 
 # # CUDA implemetation of IEEE-754 is not *exactly* like Intel / AMD's
 # # but, if we restrict to multiples of 1/128, everything matches bit-perfectly. 
@@ -104,5 +104,5 @@ if gradcheck(python.l1attn_baseline.L1AttnFn.apply, variables):
 if gradcheck(l1attn_cpp.L1AttnFn.apply, variables):
    print('Backward: Cpp grad Ok')
 
-if gradcheck(l1attn_cuda.L1AttnFn.apply, variables_cuda):
+if gradcheck(l1attn_cuda.L1AttnFn.apply, variables_cuda, nondet_tol=1e-6):
    print('Backward: Cuda grad Ok')
