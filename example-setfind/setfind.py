@@ -38,7 +38,7 @@ class LinearM(nn.Module):
 
 def genData(nn): 
 	y = torch.zeros(nn, ntok, width)
-	target = torch.zeros(nn)
+	target = torch.zeros(nn,2)
 	lin = torch.arange(0,npos)
 	x = torch.zeros(npos, width)
 	# binary encoding of the digits.  
@@ -68,7 +68,8 @@ def genData(nn):
 		y[n,npos+3,11] = 10 # reward token / target
 		
 		# distance output on y[:,-1,4]
-		target[n] = (curs - torch.argmin(indx)) # we're matching to the zero digit.
+		target[n,0] = (curs - torch.argmin(indx)) # we're matching to the zero digit.
+		target[n,1] = abs(target[n,0])
 		# target[n] = curs - torch.argmin(indx)
 	return y,target
 	
@@ -224,7 +225,7 @@ class Transformer(nn.Module):
 if __name__ == '__main__':
 	
 	parser = argparse.ArgumentParser()
-	parser.add_argument('-b', type=int, default=128, help='sample size')
+	parser.add_argument('-b', type=int, default=128, help='training data size')
 	parser.add_argument('-d', type=int, default=0, help='CUDA device')
 	parser.add_argument('--layers', type=int, default=1, help='number of layers')
 	parser.add_argument('--heads', type=int, default=1, help='number of heads')
@@ -240,14 +241,16 @@ if __name__ == '__main__':
 				y,target = genData(1)
 				im = axs[i,j].imshow(y.squeeze().numpy())
 				plt.colorbar(im, ax = axs[i,j])
-				axs[i,j].set_title(f"target:{target.item()}")
+				axs[i,j].set_title(f"target:{target[0].item()}")
 		plt.show()
 	
 	
 	start_time = time.time()
-	duration = 600 # ten minutes
+	duration = 300 
 	j = 0
-	while j < 200: # FIXME 200
+	if not cmd_args.m: 
+		j = 199
+	while j < 200: 
 		
 		model = Transformer(d_model=width, layers=cmd_args.layers, repeat=1, n_head=cmd_args.heads, init_zeros=False)
 		model.printParamCount()
@@ -279,16 +282,16 @@ if __name__ == '__main__':
 			targetx = target
 			if use_adam:
 				y = model(xx)
-				loss = torch.sum( (y[:,-1,-1] - targetx)**2 )
+				loss = torch.sum( (y[:,-1,-2:] - targetx)**2 )
 				torch.nn.utils.clip_grad_norm_(model.parameters(), 0.8)
 				loss.backward()
 				optimizer.step()
 			else: 
 				def closure(): 
 					y = model(xx)
-					loss = torch.sum( (y[:,-1,-1] - targetx)**2 ) + \
-							sum( \
-							[torch.sum(5e-4 * torch.rand_like(param) * torch.abs(param) ) for param in model.parameters()])
+					loss = torch.sum( (y[:,-1,-2:] - targetx)**2 ) # + \
+							# sum( \
+							# [torch.sum(5e-4 * torch.rand_like(param) * torch.abs(param) ) for param in model.parameters()])
 					return loss
 				loss = optimizer.step(closure) 
 			lloss = loss.detach().cpu().item()
@@ -310,19 +313,19 @@ if __name__ == '__main__':
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
 		y = model(x)
-		loss = torch.sum( (y[:,-1,-1] - target)**2 )
+		loss = torch.sum( (y[:,-1,-2:] - target)**2 )
 		lloss = loss.detach().cpu().item()
 		print("v",lloss)
-		fd_losslog.write(f'{i}\t{lloss}\t{0.0}\n')
+		fd_losslog.write(f'{i}\t{lloss}\n')
 		fd_losslog.flush()
 	
 		if cmd_args.m: 
-			fd_vallog = open(f'vallog_l{cmd_args.layers}_h{cmd_args.heads}.txt', 'a')
+			fd_vallog = open(f'vallog2_l{cmd_args.layers}_h{cmd_args.heads}.txt', 'a')
 			fd_vallog.write(f'{sample_size}\t{lloss/1000}\n') 
 			fd_vallog.flush()
 			fd_vallog.close()
 	
-	if not cmd_args.m: 
-		x,target = genData(sample_size)
-		x = x.cuda(cmd_args.d)
-		y = model.plot(x)
+	# if not cmd_args.m: 
+	# 	x,target = genData(sample_size)
+	# 	x = x.cuda(cmd_args.d)
+	# 	y = model.plot(x)
