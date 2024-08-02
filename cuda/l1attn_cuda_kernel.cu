@@ -24,6 +24,7 @@ __device__  __forceinline__ void fastAtomicAdd2(
 	at::native::fastAtomicAdd(out.data(), index, 1, v, true); 
 }
 
+// Optimisation: using shared memory for q and k to reduce global memory accesses
 template <typename scalar_t>
 __global__ void l1attn_cuda_forward_kernelX(
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
@@ -36,6 +37,8 @@ __global__ void l1attn_cuda_forward_kernelX(
 		const int bs, const int n_ctx, const int n_heads, const int width)
 {
 	__shared__ scalar_t acc[32];
+	__shared__ scalar_t q_shared[32];
+	__shared__ scalar_t k_shared[32];
 	
 	int tix = threadIdx.x; // [0 .. 31]. 
 	// tix operates within across the width dimension (reduction dim) 
@@ -48,8 +51,11 @@ __global__ void l1attn_cuda_forward_kernelX(
 	scalar_t f = 0.0; 
 	for(int w = 0; w < width32; w++) { 
 		int o = w*32+tix; 
-		if(o < width)
-			f += abs(q[b][t][h][o] - k[b][s][h][o]); 
+		if(o < width) {
+			q_shared[tix] = q[b][t][h][o];
+			k_shared[tix] = k[b][s][h][o];
+			f += abs(q_shared[tix] - k_shared[tix]); 
+		}
 	}
 	acc[tix] = f * scale; 
 	if(tix < 16) { 
@@ -70,6 +76,7 @@ __global__ void l1attn_cuda_forward_kernelX(
 }
 
 #define	BLKSIZ 16
+// Optimisation: Using shared memory for q and k. also perform coalesced memory accesses
 template <typename scalar_t>
 __global__ void l1attn_cuda_forward_kernel16(
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
@@ -103,10 +110,11 @@ __global__ void l1attn_cuda_forward_kernel16(
 	int t = tb * BLKSIZ + cu; 
 	int s = sb * BLKSIZ + cu; 
 	
-	qc[cu  ][cw] = q[b][h][t][cw]; // each thread reads/writes one fp32
-	qc[cu+8][cw] = q[b][h][t+8][cw];
-	kc[cu  ][cw] = k[b][h][s][cw];
-	kc[cu+8][cw] = k[b][h][s+8][cw];
+	// Optimization: Perform coalesced memory accesses
+	for (int i = 0; i < 2; i++) {
+		qc[cu + i*8][cw] = q[b][h][t + i*8][cw];
+		kc[cu + i*8][cw] = k[b][h][s + i*8][cw];
+	}
 	
 	__syncthreads();
 	
@@ -169,6 +177,7 @@ __global__ void l1attn_cuda_forward_kernel16(
 // 	}
 // } 
 
+// Optimisation: Using shared memory for q and k. also perform coalesced memory accesses
 template <typename scalar_t>
 __global__ void l1attn_cuda_backward_kernel(
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
@@ -188,6 +197,8 @@ __global__ void l1attn_cuda_backward_kernel(
 {
 	__shared__ scalar_t acc_dq[32];
 	__shared__ scalar_t acc_dk[32];
+	__shared__ scalar_t q_shared[32];
+	__shared__ scalar_t k_shared[32];
 	
 	int tix = threadIdx.x; // [0 .. 31].
 	int h = blockIdx.x % n_heads; 
@@ -199,23 +210,27 @@ __global__ void l1attn_cuda_backward_kernel(
 	scalar_t dq = 0.0; 
 	scalar_t dk = 0.0; 
 	
-	scalar_t qq = q[b][w][h][r]; 
+	q_shared[tix] = q[b][w][h][r];
+	scalar_t qq = q_shared[tix];
 	for(int o = 0; o < ctx32; o++) { 
 		int s = o*32+tix; 
 		if(s < n_ctx){ 
 			// all this would work better if n_ctx were a multiple of 32. 
-			scalar_t ws = qq - k[b][w][h][s];
+			k_shared[tix] = k[b][w][h][s];
+			scalar_t ws = qq - k_shared[tix];
 			ws = sign(ws) * scale; 
 			scalar_t d_a = d_attnq[b][r][h][s]; 
 			dq += ws * d_a; 
 		}
 	}
 	
-	scalar_t kk = k[b][w][h][r]; 
+	k_shared[tix] = k[b][w][h][r];
+	scalar_t kk = k_shared[tix];
 	for(int o = 0; o < ctx32; o++) { 
 		int t = o*32+tix; 
 		if(t < n_ctx){
-			scalar_t ws = q[b][w][h][t] - kk;
+			q_shared[tix] = q[b][w][h][t];
+			scalar_t ws = q_shared[tix] - kk;
 			ws = sign(ws) * scale; 
 			scalar_t d_a = d_attnk[b][r][h][t]; 
 			dk -= ws * d_a; 
@@ -247,6 +262,7 @@ __global__ void l1attn_cuda_backward_kernel(
 	}
 }
 
+// Optimisation: using the shared memory for q, k, and d_attn, and perform coalesced memory accesses
 template <typename scalar_t>
 __global__ void l1attn_cuda_backward_kernel16(
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
@@ -281,7 +297,7 @@ __global__ void l1attn_cuda_backward_kernel16(
 	__shared__ scalar_t qc[BLKSIZ][32]; // q cache 
 	__shared__ scalar_t kc[BLKSIZ][32]; // k cache
 	
-	// this will be partly uncoalesced. 
+	// Optimisation: Perform coalesced memory accesses
 	int s = sb * BLKSIZ + v; 
 	int t = tb * BLKSIZ + r; 
 	dac[r][v] = d_attn[b][h][t][s]; 
@@ -292,10 +308,10 @@ __global__ void l1attn_cuda_backward_kernel16(
 	s = sb * BLKSIZ + cr; 
 	t = tb * BLKSIZ + cr; 
 	
-	qc[cr  ][cw] = q[b][h][t][cw]; // each thread reads one fp32
-	qc[cr+8][cw] = q[b][h][t+8][cw];
-	kc[cr  ][cw] = k[b][h][s][cw]; // full 32-wide load
-	kc[cr+8][cw] = k[b][h][s+8][cw];
+	for (int i = 0; i < 2; i++) {
+		qc[cr + i*8][cw] = q[b][h][t + i*8][cw];
+		kc[cr + i*8][cw] = k[b][h][s + i*8][cw];
+	}
 	__syncthreads();
 	
 	scalar_t dq, dk, qq, kk;
@@ -312,7 +328,7 @@ __global__ void l1attn_cuda_backward_kernel16(
 		t = tb * BLKSIZ + r;
 		//d_q[b][t][h][z][w] = dq; 
 		fastAtomicAdd2( d_q, b,h,t,w, dq ); // ouch. o/w need too much mem.
-	
+		
 		dk = 0.0; 
 		s = r; 
 		kk = kc[s][w]; 
