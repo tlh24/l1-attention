@@ -6,19 +6,22 @@ heads_layers_set = [
     (1, 1),
     (2, 1),
     (2, 2),
-    (4, 4)
-    # (8, 8)
+    (4, 4), 
+    (6, 6),
+    (8, 8)
 ]
 
 # Create a figure and axes for subplots
-fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(24, 15))
+fig, axes = plt.subplots(nrows=2, ncols=3, figsize=(24, 15))
 axes = axes.flatten()
 
 # Function to create a scatter plot for a given heads and layers configuration
 def create_plot(ax, layers, heads):
 	# Read the data from the file and store it in a DataFrame
-	data = pd.read_csv(f"vallog2_l{layers}_h{heads}.txt", sep="\t", header=None, names=["data_size", "validation"])
+	data = pd.read_csv(f"vallog3_l{layers}_h{heads}.txt", sep="\t", header=None, names=["data_size", "validation"])
 
+	# remove outliers in the median calc (as you would anyway)
+	filtered_data = data[data["validation"] < 5]
 	# Group by data size and calculate median
 	grouped_data = data.groupby("data_size")["validation"].median().reset_index()
 
@@ -51,4 +54,7 @@ plt.show()
 '''
 1 = AdamW, dual loss. 
 2 = PSGD, 5 min, dual loss.
+3 = PSGD, dual loss, distractors. (-x flag)
+4 = AdamW, dual loss, distractors. (-a, -x)
+5 = PSGD, update liklihood 0.5, rank 20 approx, distractors. 
 '''

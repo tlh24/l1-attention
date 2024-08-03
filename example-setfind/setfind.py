@@ -36,7 +36,7 @@ class LinearM(nn.Module):
 	def forward(self, x):
 		return torch.einsum('oi,bhi -> bho', self.w[:,:-1], x) + self.w[:,-1]
 
-def genData(nn): 
+def genData(nn, cmd_args): 
 	y = torch.zeros(nn, ntok, width)
 	target = torch.zeros(nn,2)
 	lin = torch.arange(0,npos)
@@ -53,19 +53,21 @@ def genData(nn):
 		y[n,0:npos,:] = x[indx, :]
 		# add linear positional encoding
 		y[n,0:npos,5] = lin
-		# y[n,0:npos,6] = torch.fmod(lin, 5) # distractors!!
-		# y[n,0:npos,12] = torch.fmod(lin, 4)
-		# y[n,0:npos,13] = torch.fmod(lin, 3)
-		# y[n,0:npos,14] = torch.fmod(lin, 6)
-		# y[n,0:npos,15] = torch.fmod(lin, 7)
-		y[n,0:npos,7] = 10 # search over these
+		if cmd_args.x: 
+			indx2 = torch.randperm(npos)
+			y[n,0:npos,11] = torch.fmod(lin[indx2], 3) * 10 / 2 # distractors!!
+			y[n,0:npos,12] = torch.fmod(lin[indx2], 4) * 10 / 3
+			y[n,0:npos,13] = torch.fmod(lin[indx2], 5) * 10 / 4
+			y[n,0:npos,14] = torch.fmod(lin[indx2], 6) * 10 / 5
+			y[n,0:npos,15] = torch.fmod(lin[indx2], 7) * 10 / 6
+		y[n,0:npos,6] = 10 # search over these
 		curs = np.random.randint(0,npos)
 		# print("cursor",curs)
 		y[n,npos,5] = curs
-		y[n,npos,8] = 10 # cursor token
-		y[n,npos+1,9] = 10 # spare token?
-		y[n,npos+2,10] = 10 # spare token?
-		y[n,npos+3,11] = 10 # reward token / target
+		y[n,npos,7] = 10 # cursor token
+		y[n,npos+1,8] = 10 # spare token?
+		y[n,npos+2,9] = 10 # spare token?
+		y[n,npos+3,10] = 10 # reward token / target
 		
 		# distance output on y[:,-1,4]
 		target[n,0] = (curs - torch.argmin(indx)) # we're matching to the zero digit.
@@ -230,7 +232,8 @@ if __name__ == '__main__':
 	parser.add_argument('--layers', type=int, default=1, help='number of layers')
 	parser.add_argument('--heads', type=int, default=1, help='number of heads')
 	parser.add_argument('-a', action='store_true', help='use AdamW')
-	parser.add_argument('-m', action='store_true', help='many-mode - limit reporting and write to file. ')
+	parser.add_argument('-m', action='store_true', help='many-mode - limit reporting and write results to file. ')
+	parser.add_argument('-x', action='store_true', help='add distractors to make learning task harder.')
 	cmd_args = parser.parse_args()
 	sample_size = cmd_args.b
 	
@@ -238,7 +241,7 @@ if __name__ == '__main__':
 		fig,axs = plt.subplots(3, 3, figsize=(20,20))
 		for i in range(3): 
 			for j in range(3):
-				y,target = genData(1)
+				y,target = genData(1, cmd_args)
 				im = axs[i,j].imshow(y.squeeze().numpy())
 				plt.colorbar(im, ax = axs[i,j])
 				axs[i,j].set_title(f"target:{target[0].item()}")
@@ -264,20 +267,20 @@ if __name__ == '__main__':
 			optimizer = optim.AdamW(model.parameters(), lr=2e-3, amsgrad=True)
 		else: 
 			optimizer = psgd.LRA(model.parameters(),lr_params=0.01,lr_preconditioner=0.01, momentum=0.9,\
-				preconditioner_update_probability=0.1, exact_hessian_vector_product=False, rank_of_approximation=10, grad_clip_max_norm=5.0)
+				preconditioner_update_probability=0.5, exact_hessian_vector_product=False, rank_of_approximation=20, grad_clip_max_norm=5.0)
 		
 		fd_losslog = open('losslog.txt', 'w')
 		
-		dat,_ = genData(2000)
+		dat,_ = genData(2000, cmd_args)
 		mean = torch.sum(dat, (0,1)) / (2000 * ntok)
 		std = torch.sqrt(torch.sum((dat - mean)**2, (0,1)) / (2000 * ntok))
 		std = std / 3.5 # help l1 attn select one
 		
-		x,target = genData(sample_size)
+		x,target = genData(sample_size, cmd_args)
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
 		
-		for i in range(16000):
+		for i in range(15000):
 			xx = x
 			targetx = target
 			if use_adam:
@@ -308,7 +311,7 @@ if __name__ == '__main__':
 		j = j + 1
 			
 	
-		x,target = genData(1000)
+		x,target = genData(1000, cmd_args)
 		# x = (x - mean) / std # learn the affine transform later
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
@@ -320,12 +323,12 @@ if __name__ == '__main__':
 		fd_losslog.flush()
 	
 		if cmd_args.m: 
-			fd_vallog = open(f'vallog2_l{cmd_args.layers}_h{cmd_args.heads}.txt', 'a')
+			fd_vallog = open(f'vallog5_l{cmd_args.layers}_h{cmd_args.heads}.txt', 'a')
 			fd_vallog.write(f'{sample_size}\t{lloss/1000}\n') 
 			fd_vallog.flush()
 			fd_vallog.close()
 	
-	# if not cmd_args.m: 
-	# 	x,target = genData(sample_size)
-	# 	x = x.cuda(cmd_args.d)
-	# 	y = model.plot(x)
+	if not cmd_args.m: 
+		x,target = genData(sample_size, cmd_args)
+		x = x.cuda(cmd_args.d)
+		y = model.plot(x)
