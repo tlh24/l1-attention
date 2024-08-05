@@ -18,7 +18,7 @@ axes = axes.flatten()
 # Function to create a scatter plot for a given heads and layers configuration
 def create_plot(ax, layers, heads):
 	# Read the data from the file and store it in a DataFrame
-	data = pd.read_csv(f"vallog3_l{layers}_h{heads}.txt", sep="\t", header=None, names=["data_size", "validation"])
+	data = pd.read_csv(f"vallog2_l{layers}_h{heads}.txt", sep="\t", header=None, names=["data_size", "validation"])
 
 	# remove outliers in the median calc (as you would anyway)
 	filtered_data = data[data["validation"] < 5]

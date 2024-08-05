@@ -266,8 +266,11 @@ if __name__ == '__main__':
 		if use_adam:
 			optimizer = optim.AdamW(model.parameters(), lr=2e-3, amsgrad=True)
 		else: 
-			optimizer = psgd.LRA(model.parameters(),lr_params=0.01,lr_preconditioner=0.01, momentum=0.9,\
-				preconditioner_update_probability=0.5, exact_hessian_vector_product=False, rank_of_approximation=20, grad_clip_max_norm=5.0)
+			optimizer = psgd.LRA(model.parameters(),lr_params=0.04,lr_preconditioner=0.01, momentum=0.9,\
+				preconditioner_update_probability=0.1, exact_hessian_vector_product=False, rank_of_approximation=10, grad_clip_max_norm=5.0)
+			# turning on exact_hessian_vector_product makes things worse! 
+			# increasing the learning rate to 0.03 while keeping lr_preconditioner at 0.01 works well! usually converges.
+			# seems we can tolerate a large lr since we're operating on all the data - no mini-batches! 
 		
 		fd_losslog = open('losslog.txt', 'w')
 		
@@ -319,11 +322,12 @@ if __name__ == '__main__':
 		loss = torch.sum( (y[:,-1,-2:] - target)**2 )
 		lloss = loss.detach().cpu().item()
 		print("v",lloss)
-		fd_losslog.write(f'{i}\t{lloss}\n')
-		fd_losslog.flush()
+		if not cmd_args.m: 
+			fd_losslog.write(f'{i}\t{lloss}\n')
+			fd_losslog.flush()
 	
 		if cmd_args.m: 
-			fd_vallog = open(f'vallog5_l{cmd_args.layers}_h{cmd_args.heads}.txt', 'a')
+			fd_vallog = open(f'vallog6_l{cmd_args.layers}_h{cmd_args.heads}.txt', 'a')
 			fd_vallog.write(f'{sample_size}\t{lloss/1000}\n') 
 			fd_vallog.flush()
 			fd_vallog.close()
