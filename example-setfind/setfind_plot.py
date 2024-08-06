@@ -18,7 +18,7 @@ axes = axes.flatten()
 # Function to create a scatter plot for a given heads and layers configuration
 def create_plot(ax, layers, heads):
 	# Read the data from the file and store it in a DataFrame
-	data = pd.read_csv(f"vallog2_l{layers}_h{heads}.txt", sep="\t", header=None, names=["data_size", "validation"])
+	data = pd.read_csv(f"vallog5_l{layers}_h{heads}.txt", sep="\t", header=None, names=["data_size", "validation"])
 
 	# remove outliers in the median calc (as you would anyway)
 	filtered_data = data[data["validation"] < 5]
@@ -30,6 +30,8 @@ def create_plot(ax, layers, heads):
 
 	# Plot median for each data size
 	ax.scatter(grouped_data["data_size"], grouped_data["validation"], c='black', s=100, label='Median', edgecolors='w')
+	
+	ax.plot(grouped_data["data_size"], grouped_data["validation"], color=color, alpha=0.7, label=f'{layers}l, {heads}h - median')
 
 	ax.set_title(f'{layers} layers, {heads} heads, 15k iters')
 	ax.set_xlabel('Training data size')
@@ -57,4 +59,5 @@ plt.show()
 3 = PSGD, dual loss, distractors. (-x flag)
 4 = AdamW, dual loss, distractors. (-a, -x)
 5 = PSGD, update liklihood 0.5, rank 20 approx, distractors. 
+6 = PSGD, update liklihood 0.1, rank 10 approx, lr_params= 0.03, distractors.  
 '''

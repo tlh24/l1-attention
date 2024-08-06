@@ -23,7 +23,7 @@ for data_size in "${data_sizes[@]}"; do
 	run_script $data_size 1 2 2 & # gpu, heads, layers
 	run_script $data_size 0 4 4 &
 	wait
-	run_script $data_size 0 6 6 & 
+	run_script $data_size 1 6 6 & 
 	run_script $data_size 0 8 8 & 
 	wait
 	

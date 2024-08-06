@@ -12,6 +12,7 @@ import l1attn_cuda
 import matplotlib.pyplot as plt
 import pdb
 import psgd 
+# import psgd_20240805 as psgd
 import time
 
 npos = 10
@@ -266,11 +267,14 @@ if __name__ == '__main__':
 		if use_adam:
 			optimizer = optim.AdamW(model.parameters(), lr=2e-3, amsgrad=True)
 		else: 
-			optimizer = psgd.LRA(model.parameters(),lr_params=0.04,lr_preconditioner=0.01, momentum=0.9,\
-				preconditioner_update_probability=0.1, exact_hessian_vector_product=False, rank_of_approximation=10, grad_clip_max_norm=5.0)
+			# optimizer = psgd.LRA(model.parameters(),lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
+			# 	preconditioner_update_probability=0.1, exact_hessian_vector_product=False, rank_of_approximation=10, grad_clip_max_norm=5.0, preconditioner_type="Newton")
 			# turning on exact_hessian_vector_product makes things worse! 
 			# increasing the learning rate to 0.03 while keeping lr_preconditioner at 0.01 works well! usually converges.
 			# seems we can tolerate a large lr since we're operating on all the data - no mini-batches! 
+			# whitening preconditioner does not work. 
+			optimizer = psgd.XMat(model.parameters(),lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
+				preconditioner_update_probability=0.1, exact_hessian_vector_product=False, grad_clip_max_norm=5.0, preconditioner_type="Newton")
 		
 		fd_losslog = open('losslog.txt', 'w')
 		

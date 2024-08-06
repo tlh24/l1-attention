@@ -119,7 +119,7 @@ __global__ void l1attn_cuda_forward_kernel16(
 	t = u; // so q is shared between threads in the same warp
 	s = w; 
 	scalar_t f = 0.0; 
-	for(int o=0; o < width; o++){
+	for(int o=0; o < 32; o++){
 		f += abs(qc[t][o] - kc[s][o]); // ultimately want these to be registers
 	}
 	// back to global
