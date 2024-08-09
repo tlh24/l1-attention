@@ -89,6 +89,10 @@ __global__ void l1attn_cuda_forward_kernel16(
 		const int bs, const int n_ctx, const int n_heads, const int width)
 {
 	// q and k must be bhtw and bhsw respectively
+	// despite the name of this function, it only operates on 
+	// width 32 q and k tensors, in blocks of 16 x 16
+	// Larger would require more per-warp memory or use of registers: 
+	// 2 x 16 x 32 x 4 bytes = 4096 kB per block, so each SM can have 12 blocks. 
 	
 	int w = threadIdx.x; // t thread [0 .. 15]. 
 	int u = threadIdx.y; // t for q, s for k,  [0 .. 15]. 
