@@ -11,8 +11,8 @@ from torch import nn, optim
 import l1attn_cuda
 import matplotlib.pyplot as plt
 import pdb
-import psgd 
-# import psgd_20240805 as psgd
+# import psgd 
+import psgd_20240805 as psgd
 import time
 
 npos = 10
@@ -233,6 +233,7 @@ if __name__ == '__main__':
 	parser.add_argument('--layers', type=int, default=1, help='number of layers')
 	parser.add_argument('--heads', type=int, default=1, help='number of heads')
 	parser.add_argument('-a', action='store_true', help='use AdamW')
+	parser.add_argument('-l', action='store_true', default=False, help='use PSGD LRA')
 	parser.add_argument('-m', action='store_true', help='many-mode - limit reporting and write results to file. ')
 	parser.add_argument('-x', action='store_true', help='add distractors to make learning task harder.')
 	cmd_args = parser.parse_args()
@@ -266,15 +267,21 @@ if __name__ == '__main__':
 		
 		if use_adam:
 			optimizer = optim.AdamW(model.parameters(), lr=2e-3, amsgrad=True)
-		else: 
-			# optimizer = psgd.LRA(model.parameters(),lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
-			# 	preconditioner_update_probability=0.1, exact_hessian_vector_product=False, rank_of_approximation=10, grad_clip_max_norm=5.0, preconditioner_type="Newton")
+		else:
+			if cmd_args.l: 
+				optimizer = psgd.LRA(model.parameters(),lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
+					preconditioner_update_probability=0.5, exact_hessian_vector_product=False, rank_of_approximation=100, grad_clip_max_norm=5.0)
+			else: 
+				optimizer = psgd.Affine(model.parameters(),lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
+					preconditioner_max_size=200000, \
+					preconditioner_max_skew=200000, \
+					preconditioner_update_probability=0.5, exact_hessian_vector_product=False, grad_clip_max_norm=5.0)
 			# turning on exact_hessian_vector_product makes things worse! 
 			# increasing the learning rate to 0.03 while keeping lr_preconditioner at 0.01 works well! usually converges.
 			# seems we can tolerate a large lr since we're operating on all the data - no mini-batches! 
 			# whitening preconditioner does not work. 
-			optimizer = psgd.XMat(model.parameters(),lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
-				preconditioner_update_probability=0.1, exact_hessian_vector_product=False, grad_clip_max_norm=5.0, preconditioner_type="Newton")
+			# optimizer = psgd.XMat(model.parameters(),lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
+			# 	preconditioner_update_probability=0.1, exact_hessian_vector_product=False, grad_clip_max_norm=5.0, preconditioner_type="Newton")
 		
 		fd_losslog = open('losslog.txt', 'w')
 		
@@ -287,7 +294,7 @@ if __name__ == '__main__':
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
 		
-		for i in range(15000):
+		for i in range(10000):
 			xx = x
 			targetx = target
 			if use_adam:
@@ -331,12 +338,12 @@ if __name__ == '__main__':
 			fd_losslog.flush()
 	
 		if cmd_args.m: 
-			fd_vallog = open(f'vallog6_l{cmd_args.layers}_h{cmd_args.heads}.txt', 'a')
+			fd_vallog = open(f'vallog_2nd_3x_l{cmd_args.layers}_h{cmd_args.heads}.txt', 'a')
 			fd_vallog.write(f'{sample_size}\t{lloss/1000}\n') 
 			fd_vallog.flush()
 			fd_vallog.close()
 	
-	if not cmd_args.m: 
-		x,target = genData(sample_size, cmd_args)
-		x = x.cuda(cmd_args.d)
-		y = model.plot(x)
+	# if not cmd_args.m: 
+	# 	x,target = genData(sample_size, cmd_args)
+	# 	x = x.cuda(cmd_args.d)
+	# 	y = model.plot(x)
