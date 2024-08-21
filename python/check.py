@@ -1,7 +1,7 @@
 import time
 import torch
 from torch.autograd import gradcheck
-from l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1AttnSparseFn, expandCoo
+from l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1AttnSparseBidi, L1AttnSparseFn, L1AttnSparseBidiFn, expandCoo
 
 if True:
     batch_size = 2
@@ -27,13 +27,13 @@ variables = [x, w]
 if gradcheck(LinFun.apply, variables):
     print('Backward: LinFun grad Ok')
 
-sparseNonsparseTest() # from l1attn_sparse.py
+# sparseNonsparseTest(True) # from l1attn_sparse.py
 
 q = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
 k = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
 v = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
 
-co = torch.tensor([[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]])
+co = torch.cartesian_prod(torch.arange(n_ctx), torch.arange(n_ctx))
 coo, dst_mxlen, src_mxlen = expandCoo(co)
 
 m1 = L1AttnSparse()
@@ -64,3 +64,38 @@ coo, dst_mxlen, src_mxlen = expandCoo(co2)
 variables = [v, q, k, coo, dst_mxlen, src_mxlen]
 if gradcheck(L1AttnSparseFn.apply, variables):
     print('Backward: Baseline grad Ok w/ sparsity + permutation')
+    
+### Bidi attention ###
+
+vf = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
+vb = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
+
+m1 = L1AttnSparseBidi()
+x1 = m1(vf, vb, q, k, coo, dst_mxlen, src_mxlen)
+	
+x2 = L1AttnSparseBidiFn.apply(vf, vb, q, k, coo, dst_mxlen, src_mxlen)
+
+assert(torch.allclose(x1, x2))
+print("Bidi: Forward output matches.")
+
+variables = [vf, vb, q, k, coo, dst_mxlen, src_mxlen]
+if gradcheck(L1AttnSparseBidiFn.apply, variables):
+    print('Backward: Baseline Bidi grad Ok')
+    
+# attention is indexing permutation invariant; check this .
+indx = torch.randperm(co.shape[0])
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+
+variables = [vf, vb, q, k, coo, dst_mxlen, src_mxlen]
+if gradcheck(L1AttnSparseBidiFn.apply, variables):
+    print('Backward: Baseline Bidi grad Ok w/ permutation')
+    
+# now drop 4 indices, see if it still works.
+indx = indx[0:-4]
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+
+variables = [vf, vb, q, k, coo, dst_mxlen, src_mxlen]
+if gradcheck(L1AttnSparseBidiFn.apply, variables):
+    print('Backward: Baseline Bidi grad Ok w/ sparsity + permutation')

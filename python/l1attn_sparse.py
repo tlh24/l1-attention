@@ -17,7 +17,7 @@ class L1AttnSparse(torch.nn.Module):
 		super(L1AttnSparse, self).__init__()
 		# there are no parameters, deterministic mapping
 
-	def forward(self, v, q, k, coo, dst_mxlen, src_mxlen, use_softmax):
+	def forward(self, v, q, k, coo, dst_mxlen, src_mxlen, use_softmax=True):
 		'''
 		q, k, v are the usual dense tensors 
 			shape [batch_size, n_tok, n_heads, width]
@@ -43,7 +43,7 @@ class L1AttnSparse(torch.nn.Module):
 		qq = qq[:,:,coo[:,0],:] # this should broadcast properly.
 		kk = kk[:,:,coo[:,1],:]
 		scale = -1 / math.sqrt(width) # -1 for subsequent softmax
-		ww = torch.sum(torch.abs(qq - kk)*scale, -1)
+		ww = torch.sum(torch.abs(qq - kk), -1)*scale
 		attn = torch.ones(bs, n_heads, n_tok, dst_mxlen+1, device=q.device, dtype=q.dtype)*-1e12 # -infty
 		attn[:,:,coo[:,0], coo[:,2]] = ww[:,:,0:cl] # scatter op
 		if use_softmax:
@@ -65,7 +65,7 @@ class L1AttnSparseBidi(torch.nn.Module):
 		super(L1AttnSparseBidi, self).__init__()
 		# there are no parameters, deterministic mapping
 
-	def forward(self, vf, vb, q, k, coo, dst_mxlen, src_mxlen, use_softmax):
+	def forward(self, vf, vb, q, k, coo, dst_mxlen, src_mxlen, use_softmax=True):
 		'''
 		q, k, vf, vb are the usual dense tensors
 			shape [batch_size, n_tok, n_heads, width]
@@ -104,18 +104,21 @@ class L1AttnSparseBidi(torch.nn.Module):
 		attn_sm = attn_sm[:,:,:,:-1] # remove noop
 
 		# forward value calculation
-		vfw = torch.zeros(bs, n_heads, n_tok, dst_mxlen, width, device=q.device, dtype=q.dtype)
+		vfw = torch.zeros(bs, n_heads, n_tok, dst_mxlen, width, \
+			device=q.device, dtype=q.dtype)
 		vfw[:,:,coo[:,0],coo[:,2],:] = vvf[:,:,coo[:,1],:]
-		vfo = torch.einsum("bhds, bhdsw -> bdhw", attn_sm, vfw) # sum over src
+		vfo = torch.einsum("bhdr, bhdrw -> bdhw", attn_sm, vfw) # sum over src
 
 		#  reshape attn back to [bs, n_heads, cl]
 		ww[:,:,0:cl] = attn_sm[:,:,coo[:,0],coo[:,2]]
-		attn_b = torch.zeros(bs, n_heads, n_tok, src_mxlen, device=q.device, dtype=q.dtype)
+		attn_b = torch.zeros((bs, n_heads, n_tok, src_mxlen), \
+			device=q.device, dtype=q.dtype)
 		attn_b[:,:,coo[:,1],coo[:,3]] = ww[:,:,0:cl]
 		# if there is no sparsity, attn_b = attn_sm.T
 
 		# backward value calculation
-		vbw = torch.zeros(bs, n_heads, n_tok, src_mxlen, width, device=q.device, dtype=q.dtype)
+		vbw = torch.zeros(bs, n_heads, n_tok, src_mxlen, width, \
+			device=q.device, dtype=q.dtype)
 		vbw[:,:,coo[:,1],coo[:,3],:] = vvb[:,:,coo[:,0],:]
 		vbo = torch.einsum("bhsd, bhsdw -> bshw", attn_b, vbw) # sum over dst
 
@@ -123,7 +126,7 @@ class L1AttnSparseBidi(torch.nn.Module):
 
 class L1AttnSparseFn(Function):
 	@staticmethod
-	def forward(ctx, v, q, k, coo, dst_mxlen, src_mxlen, use_softmax):
+	def forward(ctx, v, q, k, coo, dst_mxlen, src_mxlen, use_softmax=True):
 		'''
 		q, k, v are the usual dense tensors
 			shape [batch_size, n_tok, n_heads, width]
@@ -228,7 +231,7 @@ class L1AttnSparseFn(Function):
 
 class L1AttnSparseBidiFn(Function):
 	@staticmethod
-	def forward(ctx, vf, vb, q, k, coo, dst_mxlen, src_mxlen, use_softmax):
+	def forward(ctx, vf, vb, q, k, coo, dst_mxlen, src_mxlen, use_softmax=True):
 		'''
 		q, k, vf, vb are the usual dense tensors
 			shape [batch_size, n_tok, n_heads, width]
@@ -264,19 +267,20 @@ class L1AttnSparseBidiFn(Function):
 		else:
 			attn_sm = torch.exp(attn)
 		attn_sm = attn_sm[:,:,:-1,:]
+		
 		vfw = torch.zeros((bs, n_tok, dst_mxlen, n_heads, width),\
 			device=q.device, dtype=q.dtype) # uff, large tensor
 		vfw[:,coo[:,0],coo[:,2],:,:] = vf[:,coo[:,1],:,:]
 		vfo = torch.einsum("bdrh, bdrhw -> bdhw", attn_sm, vfw) # sum over src
 
 		#  reshape attn back to [bs, cl, n_heads]
-		ww[:,0:cl,:] = attn_sm[:,coo[:,0],coo[:,2],:]
 		attn_b = torch.zeros((bs, n_tok, src_mxlen, n_heads),device=q.device, dtype=q.dtype)
-		attn_b[:,coo[:,1],coo[:,3],:] = ww[:,0:cl,:]
+		attn_b[:,coo[:,1],coo[:,3],:] = attn_sm[:,coo[:,0],coo[:,2],:]
 		# if there is no sparsity, attn_b == attn_sm.T
 
 		# backward value calculation
-		vbw = torch.zeros((bs, n_tok, src_mxlen, n_heads, width), device=q.device, dtype=q.dtype)
+		vbw = torch.zeros((bs, n_tok, src_mxlen, n_heads, width), \
+			device=q.device, dtype=q.dtype)
 		vbw[:,coo[:,1],coo[:,3],:,:] = vb[:,coo[:,0],:,:]
 		vbo = torch.einsum("bsrh, bsrhw -> bshw", attn_b, vbw) # sum over dst
 
@@ -287,7 +291,7 @@ class L1AttnSparseBidiFn(Function):
 
 	@staticmethod
 	def backward(ctx, dvo):
-		vf,vb,q,k,attn_sm,coo,dst_mxlen,src_mxlen,use_softmax = ctx.saved_tensors[:8]
+		vf,vb,q,k,attn_sm,coo,dst_mxlen,src_mxlen,use_softmax = ctx.saved_tensors[:9]
 		dst_mxlen = dst_mxlen.item()
 		src_mxlen = src_mxlen.item()
 		use_softmax = use_softmax.item()
@@ -303,9 +307,9 @@ class L1AttnSparseBidiFn(Function):
 		dvf = torch.sum(dvfp, 2)
 
 		# recreate attn_b
-		ww[:,0:cl,:] = attn_sm[:,coo[:,0],coo[:,2],:]
-		attn_b = torch.zeros((bs, n_tok, src_mxlen, n_heads),device=q.device, dtype=q.dtype)
-		attn_b[:,coo[:,1],coo[:,3],:] = ww[:,0:cl,:]
+		attn_b = torch.zeros((bs, n_tok, src_mxlen, n_heads), \
+			device=q.device, dtype=q.dtype)
+		attn_b[:,coo[:,1],coo[:,3],:] = attn_sm[:,coo[:,0],coo[:,2],:]
 
 		# scale dvo by attn_b matrix
 		dvbw = torch.einsum("bsrh, bshw -> bsrhw", attn_b, dvo)
@@ -316,11 +320,18 @@ class L1AttnSparseBidiFn(Function):
 		dvb = torch.sum(dvbp, 2)
 
 		# calculate derivative wrt softmax
-		# first recreate vw
-		vw = torch.zeros((bs, n_tok, dst_mxlen, n_heads, width), \
+		# first recreate vfw, vbw
+		vfw = torch.zeros((bs, n_tok, dst_mxlen, n_heads, width), \
 			device=q.device, dtype=q.dtype)
-		vw[:,coo[:,0],coo[:,2],:,:] = v[:,coo[:,1],:,:]
-		dattn_sm = torch.einsum("bdrhw, bdhw -> bdrh ", vw, dvo)
+		vfw[:,coo[:,0],coo[:,2],:,:] = vf[:,coo[:,1],:,:]
+		vbw = torch.zeros((bs, n_tok, src_mxlen, n_heads, width), \
+			device=q.device, dtype=q.dtype)
+		vbw[:,coo[:,1],coo[:,3],:,:] = vb[:,coo[:,0],:,:]
+		dattn_sm = torch.einsum("bdrhw, bdhw -> bdrh", vfw, dvo)
+		dattn_b = torch.einsum("bsrhw, bshw -> bsrh", vbw, dvo)
+		dattn_smb = torch.zeros_like(dattn_sm)
+		dattn_smb[:,coo[:,0],coo[:,2],:] = dattn_b[:,coo[:,1],coo[:,3],:]
+		dattn_sm = dattn_sm + dattn_smb
 
 		# calculate the jacobian of the softmax
 		# this is not affected by adding one to the denominator!
@@ -351,7 +362,7 @@ class L1AttnSparseBidiFn(Function):
 		dq = torch.einsum("bdrhw, bdrh -> bdhw", wsq, dattn)
 		dk = torch.einsum("bsrhw, bsrh -> bshw", wsk, -1*dattn_k)
 
-		return dv, dq, dk, None, None, None, None
+		return dvf, dvb, dq, dk, None, None, None, None
 
 class LinFun(Function):
 	# make sure I understand the dumb simple case.
@@ -563,7 +574,6 @@ def bidiTest():
 
 	# co = torch.cartesian_prod(torch.arange(3), torch.arange(3))
 	co = torch.tensor([[0,0],[0,1],[0,2],[1,0],[1,1],[2,0],[2,1]])
-
 	coo, dst_mxlen, src_mxlen = expandCoo(co)
 
 	m = L1AttnSparseBidi()
@@ -572,7 +582,7 @@ def bidiTest():
 
 
 if __name__ == "__main__":
+	sparseNonsparseTest(True)
+	sparseNonsparseTest(False)
 	bidiTest()
-	# sparseNonsparseTest(True)
-	# sparseNonsparseTest(False)
 
