@@ -1,11 +1,12 @@
 import math
-from torch import nn
-from torch.autograd import Function
 import torch
+from torch import nn
 import torch.nn.functional as F
+from torch.autograd import Function
 import pdb
 
-import l1attn_sparse_cpp_drv
+import l1attn_sparse_drv
+
 
 
 class L1AttnSparseFn(Function):
@@ -15,7 +16,7 @@ class L1AttnSparseFn(Function):
 		v = v.contiguous(); 
 		q = q.contiguous(); 
 		k = k.contiguous();
-		vo,attn = l1attn_sparse_cpp_drv.forward(v, q, k, coo, dst_mxlen, use_softmax)
+		vo,attn = l1attn_sparse_drv.forward(v, q, k, coo, dst_mxlen, use_softmax)
 		ctx.save_for_backward(v, q, k, coo, attn, torch.tensor(dst_mxlen), torch.tensor(use_softmax))
 		
 		# check that the attention is correct
@@ -45,7 +46,7 @@ class L1AttnSparseFn(Function):
 		dst_mxlen = dst_mxlen.item()
 		use_softmax = use_softmax.item()
 		
-		d_v, d_q, d_k = l1attn_sparse_cpp_drv.backward(dvo, v,q,k,coo,attn,dst_mxlen,use_softmax)
+		d_v, d_q, d_k = l1attn_sparse_drv.backward(dvo, v,q,k,coo,attn,dst_mxlen,use_softmax)
 		return d_v, d_q, d_k, None, None, None
 
 
@@ -55,8 +56,7 @@ class L1AttnSparse(nn.Module):
 
 	def forward(self, q, k):
 		return L1AttnSparseFn.apply(q, k)
-
-
+		
 
 def expandCoo(co):
 	'''
@@ -92,7 +92,7 @@ def expandCoo(co):
 		dst_mxlen = max(dst_mxlen, dst_cntr[dst])
 		src_mxlen = max(src_mxlen, src_cntr[src])
 		dst_max = max(dst_max, dst)
-		src_max = max(src_max, dst)
+		src_max = max(src_max, src)
 	# go back and make sure all destinations are written -
 	# that is, all destinations have at least one source.
 	for i in range(dst_max):

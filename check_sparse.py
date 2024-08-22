@@ -1,8 +1,9 @@
 import time
 import torch
 from torch.autograd import gradcheck
-from python.l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1AttnSparseFn, expandCoo
+from python.l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1AttnSparseFn, L1AttnSparseBidi, expandCoo
 import l1attn_sparse_cpp
+import l1attn_sparse_bidi_cpp
 import l1attn_sparse_cuda
 
 debug = False
@@ -38,7 +39,7 @@ q = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
 k = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
 v = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
 
-co = torch.tensor([[0,0],[0,1],[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]])
+co = torch.cartesian_prod(torch.arange(n_ctx), torch.arange(n_ctx))
 coo, dst_mxlen, src_mxlen = expandCoo(co)
 
 ## -- python implementation -- ##
@@ -82,7 +83,7 @@ for use_softmax in [True, False]:
 	x1 = m1.forward(v, q, k, coo, dst_mxlen, src_mxlen, use_softmax)
 	x3 = l1attn_sparse_cpp.L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen, use_softmax)
 	assert( torch.allclose(x1, x3) )
-	print(f'Forward: Cpp dense Ok, use_softmax={use_softmax}')
+	print(f'Forward: Cpp Ok, use_softmax={use_softmax}')
 
 indx = torch.randperm(co.shape[0])
 co2 = co[indx, :]
@@ -91,7 +92,7 @@ for use_softmax in [True, False]:
 	x1 = m1.forward(v, q, k, coo, dst_mxlen, src_mxlen, use_softmax)
 	x3 = l1attn_sparse_cpp.L1AttnSparseFn.apply(v, q, k, coo, dst_mxlen, use_softmax)
 	assert( torch.allclose(x1, x3) )
-	print(f'Forward: Cpp dense, permuted Ok, use_softmax={use_softmax}')
+	print(f'Forward: Cpp, permuted Ok, use_softmax={use_softmax}')
   
 coo, dst_mxlen, src_mxlen = expandCoo(co)
 for use_softmax in [True, False]: 
@@ -118,6 +119,56 @@ for use_softmax in [True, False]:
 	variables = [v, q, k, coo, dst_mxlen, use_softmax]
 	if gradcheck(l1attn_sparse_cpp.L1AttnSparseFn.apply, variables):
 		print(f'Backward: Cpp grad Ok w/ sparsity + permutation, sm={use_softmax}')
+		
+# -- Bidi implementation -- #
+
+vf = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
+vb = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
+m1b = L1AttnSparseBidi()
+
+# non-sparse verification.
+coo, dst_mxlen, src_mxlen = expandCoo(co)
+for use_softmax in [True, False]: 
+	x1 = m1b.forward(vf, vb, q, k, coo, dst_mxlen, src_mxlen, use_softmax)
+	x3 = l1attn_sparse_bidi_cpp.L1AttnSparseBidiFn.apply(vf, vb, q, k, coo, dst_mxlen, use_softmax)
+	assert( torch.allclose(x1, x3) )
+	print(f'Forward: Cpp bidi Ok, use_softmax={use_softmax}')
+
+indx = torch.randperm(co.shape[0])
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+for use_softmax in [True, False]: 
+	x1 = m1b.forward(vf, vb, q, k, coo, dst_mxlen, src_mxlen, use_softmax)
+	x3 = l1attn_sparse_bidi_cpp.L1AttnSparseBidiFn.apply(vf, vb, q, k, coo, dst_mxlen, use_softmax)
+	assert( torch.allclose(x1, x3) )
+	print(f'Forward: Cpp bidi, permuted Ok, use_softmax={use_softmax}')
+  
+coo, dst_mxlen, src_mxlen = expandCoo(co)
+for use_softmax in [True, False]: 
+	variables = [vf, vb, q, k, coo, dst_mxlen, use_softmax]
+	if gradcheck(l1attn_sparse_bidi_cpp.L1AttnSparseBidiFn.apply, variables, nondet_tol=1e-6):
+		print(f'Backward: Cpp bidi grad Ok, use_softmax={use_softmax}')
+
+# attention is indexing permutation invariant; check this .
+indx = torch.randperm(co.shape[0])
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+
+for use_softmax in [True, False]: 
+	variables = [vf, vb, q, k, coo, dst_mxlen, use_softmax]
+	if gradcheck(l1attn_sparse_bidi_cpp.L1AttnSparseBidiFn.apply, variables):
+		print(f'Backward: Cpp bidi grad Ok w/ permutation, use_softmax={use_softmax}')
+
+# now drop 4 indices, see if it still works.
+indx = indx[0:-4]
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+
+for use_softmax in [True, False]: 
+	variables = [vf, vb, q, k, coo, dst_mxlen, use_softmax]
+	if gradcheck(l1attn_sparse_bidi_cpp.L1AttnSparseBidiFn.apply, variables):
+		print(f'Backward: Cpp bidi grad Ok w/ sparsity + permutation, use_softmax={use_softmax}')
+
 
 ## -- CUDA implementation -- ##
 cdevice = torch.device("cuda")
