@@ -5,6 +5,7 @@ from python.l1attn_sparse import sparseNonsparseTest, LinFun, L1AttnSparse, L1At
 import l1attn_sparse_cpp
 import l1attn_sparse_bidi_cpp
 import l1attn_sparse_cuda
+import l1attn_sparse_bidi_cuda
 
 debug = False
 
@@ -171,6 +172,8 @@ for use_softmax in [True, False]:
 
 
 ## -- CUDA implementation -- ##
+
+
 cdevice = torch.device("cuda")
 v = v.to(cdevice)
 q = q.to(cdevice)
@@ -222,6 +225,60 @@ for use_softmax in [True, False]:
 	variables = [v, q, k, coo, dst_mxlen, use_softmax]
 	if gradcheck(l1attn_sparse_cuda.L1AttnSparseFn.apply, variables, nondet_tol=1e-6):
 		print(f'Backward: Cuda grad Ok w/ sparsity + permutation, sm={use_softmax}')
+
+# -- Bidi Cuda implementation -- #
+
+cdevice = torch.device("cuda")
+vf = vf.to(cdevice)
+vb = vb.to(cdevice)
+
+# non-sparse verification.
+coo, dst_mxlen, src_mxlen = expandCoo(co)
+coo = coo.to(cdevice)
+for use_softmax in [True, False]: 
+	x1 = m1b.forward(vf, vb, q, k, coo, dst_mxlen, src_mxlen, use_softmax)
+	x3 = l1attn_sparse_bidi_cuda.L1AttnSparseBidiFn.apply(vf, vb, q, k, coo, dst_mxlen, use_softmax)
+	assert( torch.allclose(x1, x3) )
+	print(f'Forward: Cuda bidi Ok, use_softmax={use_softmax}')
+
+indx = torch.randperm(co.shape[0])
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+coo = coo.to(cdevice)
+for use_softmax in [True, False]: 
+	x1 = m1b.forward(vf, vb, q, k, coo, dst_mxlen, src_mxlen, use_softmax)
+	x3 = l1attn_sparse_bidi_cuda.L1AttnSparseBidiFn.apply(vf, vb, q, k, coo, dst_mxlen, use_softmax)
+	assert( torch.allclose(x1, x3) )
+	print(f'Forward: Cuda bidi, permuted Ok, use_softmax={use_softmax}')
+  
+coo, dst_mxlen, src_mxlen = expandCoo(co)
+coo = coo.to(cdevice)
+for use_softmax in [True, False]: 
+	variables = [vf, vb, q, k, coo, dst_mxlen, use_softmax]
+	if gradcheck(l1attn_sparse_bidi_cuda.L1AttnSparseBidiFn.apply, variables, nondet_tol=1e-6):
+		print(f'Backward: Cuda bidi grad Ok, use_softmax={use_softmax}')
+
+# attention is indexing permutation invariant; check this.
+indx = torch.randperm(co.shape[0])
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+coo = coo.to(cdevice)
+
+for use_softmax in [True, False]: 
+	variables = [vf, vb, q, k, coo, dst_mxlen, use_softmax]
+	if gradcheck(l1attn_sparse_bidi_cuda.L1AttnSparseBidiFn.apply, variables, nondet_tol=1e-6):
+		print(f'Backward: Cuda bidi grad Ok w/ permutation, use_softmax={use_softmax}')
+
+# now drop 4 indices, see if it still works.
+indx = indx[0:-4]
+co2 = co[indx, :]
+coo, dst_mxlen, src_mxlen = expandCoo(co2)
+coo = coo.to(cdevice)
+
+for use_softmax in [True, False]: 
+	variables = [vf, vb, q, k, coo, dst_mxlen, use_softmax]
+	if gradcheck(l1attn_sparse_bidi_cuda.L1AttnSparseBidiFn.apply, variables, nondet_tol=1e-6):
+		print(f'Backward: Cuda bidi grad Ok w/ sparsity + permutation, sm={use_softmax}')
 
 
 # 

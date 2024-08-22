@@ -525,3 +525,283 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	
 	return {dv, dq, dk};
 }
+
+/* ### Bidirectional sparse routines ### */
+
+template <typename scalar_t>
+__global__ void l1attnSparseBidi_fwd_vo_kernel(
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	vf,
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	vb,
+	const torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits>
+	coo,
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits>
+	attn,
+	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits>
+	vo, 
+	const int bs, const int n_tok, const int n_heads, const int v_width, 
+	const int cl, const int dst_mxlen)
+{
+	// 1D threads and blocks.
+	int indx = threadIdx.x + blockIdx.x * blockDim.x;
+
+	if(indx < bs*n_heads*cl*v_width){
+		int j = indx; 
+		int w = j % v_width; 
+		j /= v_width; 
+		int h = j % n_heads; 
+		j /= n_heads; 
+		int b = j % bs; 
+		j /= bs; 
+		int c = j % cl; 
+
+		int dst = coo[c][0]; 
+		int src = coo[c][1]; 
+		int r = coo[c][2]; 
+
+		// this is so inefficient.  meh.
+		fastAtomicAdd2(vo, b,dst,h,w, attn[b][dst][r][h] * vf[b][src][h][w]);
+		fastAtomicAdd2(vo, b,src,h,w, attn[b][dst][r][h] * vb[b][dst][h][w]);
+	}
+}
+
+template <typename scalar_t>
+__global__ void l1attnSparseBidi_bkwd_dvf_dvb_dattn_sm_kernel(
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	dvo,
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	vf,
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	vb,
+	const torch::PackedTensorAccessor32<int,2,torch::RestrictPtrTraits>
+	coo,
+	const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits>
+	attn,
+	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	dvf,
+	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	dvb,
+	torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
+	dattn_sm,
+	const int bs, const int n_tok, const int n_heads, const int v_width, 
+	const int cl, const int dst_mxlen)
+{
+	__shared__ scalar_t acc[8][32];
+	
+	int tix = threadIdx.x; // [0 .. 31]. 
+	int tiy = threadIdx.y; // [0 .. 7]
+	// tix operates within across the width dimension (reduction dim) 
+	int indx = tiy + blockIdx.x * 8;
+
+	if(indx < bs*n_heads*cl){
+		int j = indx; 
+		int h = j % n_heads; 
+		j /= n_heads; 
+		int b = j % bs; 
+		j /= bs; 
+		int c = j % cl; 
+
+		int dst = coo[c][0]; 
+		int src = coo[c][1]; 
+		int r = coo[c][2]; 
+		scalar_t at = attn[b][dst][r][h];
+		
+		// this is the simplest possible version -- 
+		// just use atomic summation 
+		// same as the C++ version.
+		// each thread reads attn, dvo & writes dvf, dvb, dattn_sm
+		
+		int width32 = (v_width + 31) / 32; 
+		scalar_t f = 0.0; 
+		for(int w = 0; w < width32; w++) { 
+			int o = w*32+tix; 
+			if(o < v_width){
+				// calc dvf, dvb
+				fastAtomicAdd2(dvf, b,src,h,o, at * dvo[b][dst][h][o]);
+				fastAtomicAdd2(dvb, b,dst,h,o, at * dvo[b][src][h][o]); 
+				// sum dattn_sm
+				f += vf[b][src][h][o] * dvo[b][dst][h][o];
+				f += vb[b][dst][h][o] * dvo[b][src][h][o];
+			}
+		}
+		acc[tiy][tix] = f; 
+		if(tix < 16) {
+			acc[tiy][tix] += acc[tiy][tix + 16];
+			__syncthreads();
+			acc[tiy][tix] += acc[tiy][tix + 8 ];
+			__syncthreads();
+			acc[tiy][tix] += acc[tiy][tix + 4 ];
+			__syncthreads();
+			acc[tiy][tix] += acc[tiy][tix + 2 ];
+			__syncthreads();
+			acc[tiy][tix] += acc[tiy][tix + 1 ];
+			__syncthreads();
+			if(tix == 0){
+				dattn_sm[b][dst][r][h] = acc[tiy][tix]; 
+			}
+		}
+	}
+}
+
+std::vector<torch::Tensor> l1attnSparseBidi_cuda_forward(
+		torch::Tensor vf,
+		torch::Tensor vb,
+		torch::Tensor q,
+		torch::Tensor k,
+		torch::Tensor coo,
+		int dst_mxlen, 
+		bool use_softmax) 
+{
+	int bs = q.sizes()[0]; 
+	int n_tok = q.sizes()[1];
+	int n_heads = q.sizes()[2]; 
+	int width = q.sizes()[3];
+	int v_width = vf.sizes()[3]; 
+	int cl = coo.sizes()[0];
+
+	auto options = torch::TensorOptions()
+		.dtype(q.dtype())
+		.device(q.device())
+		.requires_grad(q.requires_grad()); 
+
+	auto attn = torch::ones({bs, n_tok, dst_mxlen, n_heads}, options);
+	attn = attn * -1e12; // -infty
+	auto vo = torch::zeros({bs, n_tok, n_heads, v_width}, options);
+
+	const dim3 dimBlocks(32, 8); // x, y, z
+	int n_elements = bs * n_heads * cl;
+	int n_blocks = (n_elements + 7) / 8;
+
+	auto scale = -1.0 / sqrt(width); 
+		
+	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_fwd_attn_kernel", ([&] {
+		l1attnSparse_fwd_attn_kernel<scalar_t><<<n_blocks, dimBlocks>>>(
+			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			coo.packed_accessor32<int,2,torch::RestrictPtrTraits>(),
+			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			scale, bs, n_tok, n_heads, width, cl, dst_mxlen);
+	}));
+	
+	const int threads = 256; 
+	n_elements = bs * n_heads * n_tok; 
+	n_blocks = (n_elements + threads - 1) / threads;
+	
+	if(use_softmax){
+		AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_fwd_sm_kernel", ([&] {
+			l1attnSparse_fwd_sm_kernel<scalar_t><<<n_blocks, threads>>>(
+				attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+				bs, n_tok, n_heads, width, cl, dst_mxlen);
+		}));
+	} else {
+		AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_fwd_nsm_kernel", ([&] {
+			l1attnSparse_fwd_nsm_kernel<scalar_t><<<n_blocks, threads>>>(
+				attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+				bs, n_tok, n_heads, width, cl, dst_mxlen);
+		}));
+	}
+	
+	n_elements = bs * n_heads * cl * v_width; 
+	n_blocks = (n_elements + threads - 1) / threads;
+	
+	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparseBidi_fwd_vo_kernel", ([&] {
+		l1attnSparseBidi_fwd_vo_kernel<scalar_t><<<n_blocks, threads>>>(
+			vf.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			vb.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(), 
+			coo.packed_accessor32<int,2,torch::RestrictPtrTraits>(),
+			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			vo.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			bs, n_tok, n_heads, v_width, cl, dst_mxlen);
+	}));
+
+	return {vo, attn};
+}
+
+std::vector<torch::Tensor> l1attnSparseBidi_cuda_backward(
+		torch::Tensor dvo,
+		torch::Tensor vf,
+		torch::Tensor vb,
+		torch::Tensor q,
+		torch::Tensor k,
+		torch::Tensor coo,
+		torch::Tensor attn,
+		int dst_mxlen, 
+		bool use_softmax ) 
+{
+	int bs = q.sizes()[0]; 
+	int n_tok = q.sizes()[1]; 
+	int n_heads = q.sizes()[2]; 
+	int width = q.sizes()[3]; 
+	int v_width = vf.sizes()[3]; 
+	int cl = coo.sizes()[0];
+
+	auto scale = -1.0 / sqrt(width); 
+	
+	auto options = torch::TensorOptions()
+		.dtype(q.dtype())
+		.device(q.device())
+		.requires_grad(q.requires_grad()); 
+	
+	auto dvf = torch::zeros({bs, n_tok, n_heads, v_width}, options);
+	auto dvb = torch::zeros({bs, n_tok, n_heads, v_width}, options);
+	auto dq = torch::zeros({bs, n_tok, n_heads, width}, options);
+	auto dk = torch::zeros({bs, n_tok, n_heads, width}, options);
+	auto dattn_sm = torch::zeros({bs, n_tok, dst_mxlen, n_heads}, options);
+	auto dattn = torch::zeros({bs, n_tok, dst_mxlen, n_heads}, options);
+	
+	const dim3 dimBlocks(32, 8); // x, y, z
+	int n_elements = bs * n_heads * cl;
+	int n_blocks = (n_elements + 7) / 8;
+		
+	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparseBidi_bkwd_dvf_dvb_dattn_sm_kernel", ([&] {
+		l1attnSparseBidi_bkwd_dvf_dvb_dattn_sm_kernel<scalar_t><<<n_blocks, dimBlocks>>>(
+			dvo.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			vf.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			vb.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			coo.packed_accessor32<int,2,torch::RestrictPtrTraits>(),
+			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			dvf.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			dvb.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			dattn_sm.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			bs, n_tok, n_heads, v_width, cl, dst_mxlen);
+	}));
+	
+	const int threads = 256; 
+	n_elements = bs * n_heads * n_tok * dst_mxlen; 
+	n_blocks = (n_elements + threads - 1) / threads;
+	
+	if(use_softmax){
+		AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dattn_sm_kernel", ([&] {
+			l1attnSparse_bkwd_dattn_sm_kernel<scalar_t><<<n_blocks, threads>>>(
+				attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+				dattn_sm.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+				dattn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+				bs, n_tok, n_heads, width, cl, dst_mxlen);
+		}));
+	} else {
+		AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dattn_nsm_kernel", ([&] {
+			l1attnSparse_bkwd_dattn_nsm_kernel<scalar_t><<<n_blocks, threads>>>(
+				attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+				dattn_sm.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+				dattn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+				bs, n_tok, n_heads, width, cl, dst_mxlen);
+		}));
+	}
+	
+	n_elements = bs * n_heads * cl * width; 
+	n_blocks = (n_elements + threads - 1) / threads;
+	
+	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dq_dk_kernel", ([&] {
+		l1attnSparse_bkwd_dq_dk_kernel<scalar_t><<<n_blocks, threads>>>(
+			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			coo.packed_accessor32<int,2,torch::RestrictPtrTraits>(),
+			dattn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			dq.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			dk.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
+			scale, bs, n_tok, n_heads, width, cl, dst_mxlen);
+	}));
+	
+	return {dvf, dvb, dq, dk};
+}
