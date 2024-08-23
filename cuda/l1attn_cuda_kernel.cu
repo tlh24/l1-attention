@@ -25,7 +25,7 @@ __device__  __forceinline__ void fastAtomicAdd2(
 }
 
 template <typename scalar_t>
-__global__ void l1attn_cuda_forward_kernelX(
+__global__ void l1attn_cuda_forward_kernel(
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 		q,
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
@@ -71,7 +71,7 @@ __global__ void l1attn_cuda_forward_kernelX(
 
 #define	BLKSIZ 16
 template <typename scalar_t>
-__global__ void l1attn_cuda_forward_kernel16(
+__global__ void l1attn_cuda_forward_kernel32(
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 		q,
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
@@ -81,11 +81,13 @@ __global__ void l1attn_cuda_forward_kernel16(
 		const scalar_t scale, 
 		const int bs, const int n_ctx, const int n_heads, const int width)
 {
-	// q and k must be bhtw and bhsw respectively
-	// despite the name of this function, it only operates on 
-	// width 32 q and k tensors, in blocks of 16 x 16
-	// Larger would require more per-warp memory or use of registers: 
-	// 2 x 16 x 32 x 4 bytes = 4096 kB per block, so each SM can have 12 blocks. 
+	/* q and k must be bhtw and bhsw respectively
+	 * this function operates on q and k tensors, in blocks of 16 x 16
+	 * q and k must be width a multiple of 32 with a loop:
+	 * Larger would require more per-warp memory or use of registers: 
+	 * 2 x 16 x 32 x 4 bytes = 4096 kB per block, 
+	 * so each SM can have 12 blocks = good
+	 */
 	
 	int w = threadIdx.x; // t thread [0 .. 15]. 
 	int u = threadIdx.y; // t for q, s for k,  [0 .. 15]. 
@@ -102,76 +104,36 @@ __global__ void l1attn_cuda_forward_kernel16(
 	
 	//reshape to 8 warps, 32 threads - better mem throughput
 	int tid = u*BLKSIZ + w; 
-	int cw = tid % 32; // cache w
-	int cu = tid / 32; // cache u
-	int t = tb * BLKSIZ + cu; 
-	int s = sb * BLKSIZ + cu; 
+	int cw = tid % 32; // cache w (thread)
+	int cu = tid / 32; // cache u (warp)
 	
-	qc[cu  ][cw] = q[b][h][t][cw]; // each thread reads/writes one fp32
-	qc[cu+8][cw] = q[b][h][t+8][cw];
-	kc[cu  ][cw] = k[b][h][s][cw];
-	kc[cu+8][cw] = k[b][h][s+8][cw];
-	
-	__syncthreads();
-	
-	// simple approach: each thread computes one attention value
-	// redefine t and s
-	t = u; // so q is shared between threads in the same warp
-	s = w; 
 	scalar_t f = 0.0; 
-	for(int o=0; o < 32; o++){
-		f += abs(qc[t][o] - kc[s][o]); // ultimately want these to be registers
+	int t,s; 
+	for(int wo = 0; wo < width; wo += 32){
+		t = tb * BLKSIZ + cu; 
+		s = sb * BLKSIZ + cu; 
+		int cwo = cw + wo; 
+		qc[cu  ][cw] = q[b][h][t][cwo]; // each thread reads/writes 4 fp32
+		qc[cu+8][cw] = q[b][h][t+8][cwo]; // some bubbles but eh
+		kc[cu  ][cw] = k[b][h][s][cwo];
+		kc[cu+8][cw] = k[b][h][s+8][cwo];
+		
+		__syncthreads();
+		
+		// simple approach: each thread computes one attention value
+		// redefine t and s
+		t = u; // so q is shared between threads in the same warp
+		s = w; 
+		for(int o=0; o < 32; o++){
+			f += abs(qc[t][o] - kc[s][o]); // ultimately want these to be registers
+		}
 	}
-	// back to global
+	// back to global indexing
 	t = tb * BLKSIZ + u; 
 	s = sb * BLKSIZ + w; 
 	attn[b][s][t][h] = f * scale; // this is unaligned. ought to fix.
 }
 
-// template <typename scalar_t>
-// __global__ void l1attn_cuda_backward_kernel_old(
-// 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		d_attn,
-// 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		q,
-// 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		k,
-// 		torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		d_q,
-// 		torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		d_k,
-// 		const scalar_t scale, 
-// 		const int bs, const int n_ctx, const int n_heads, const int width ) 
-// {
-// 	// reduction (across s and t) has to be done within a thread warp: 
-// 	// can't have different warps write the same memory. 
-// 	// they will interfere / not give the correct answer!
-// 	
-// 	int indx = threadIdx.x + blockIdx.x * blockDim.x; // 1D
-// 	
-// 	if(indx < bs*n_ctx*n_ctx*n_heads){
-// 		// again, output indexing b/c thread blocks can't overlap writes.
-// 		// see note in forward kernel.
-// 		int j = indx; 
-// 		int h = j % n_heads; 
-// 		j /= n_heads; 
-// 		int s = j % n_ctx; 
-// 		j /= n_ctx; 
-// 		int t = j % n_ctx; 
-// 		j /= n_ctx; 
-// 		int b = j % bs; 
-// 		
-// 		scalar_t d_a = d_attn[b][s][t][h]; 
-// 		for(int w = 0; w < width; w++){
-// 			scalar_t ws = q[b][t][h][w] - k[b][s][h][w];
-// 			ws = sign(ws) * scale; 
-// 			// atomicAdd((scalar_t*)&(d_q[b][t][h][w]), ws * d_a);
-// 			// atomicAdd((scalar_t*)&(d_k[b][s][h][w]), -1*ws * d_a);
-// 			fastAtomicAdd2(d_q, b,t,h,w, ws * d_a);
-// 			fastAtomicAdd2(d_k, b,s,h,w, -1*ws * d_a);
-// 		}
-// 	}
-// } 
 
 template <typename scalar_t>
 __global__ void l1attn_cuda_backward_kernel(
@@ -252,7 +214,7 @@ __global__ void l1attn_cuda_backward_kernel(
 }
 
 template <typename scalar_t>
-__global__ void l1attn_cuda_backward_kernel16(
+__global__ void l1attn_cuda_backward_kernel32(
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
 		d_attn,
 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
@@ -285,49 +247,54 @@ __global__ void l1attn_cuda_backward_kernel16(
 	__shared__ scalar_t qc[BLKSIZ][32]; // q cache 
 	__shared__ scalar_t kc[BLKSIZ][32]; // k cache
 	
-	// this will be partly uncoalesced. 
+	// this will be partly uncoalesced w/ BLKSIZ=16
 	int s = sb * BLKSIZ + v; 
 	int t = tb * BLKSIZ + r; 
 	dac[r][v] = d_attn[b][h][t][s]; 
 	
 	int tid = r*BLKSIZ + v; 
-	int cw = tid % 32; // cache w
-	int cr = tid / 32; // cache r
-	s = sb * BLKSIZ + cr; 
-	t = tb * BLKSIZ + cr; 
+	int cw = tid % 32; // cache w (thread)
+	int cr = tid / 32; // cache r (warp)
 	
-	qc[cr  ][cw] = q[b][h][t][cw]; // each thread reads one fp32
-	qc[cr+8][cw] = q[b][h][t+8][cw];
-	kc[cr  ][cw] = k[b][h][s][cw]; // full 32-wide load
-	kc[cr+8][cw] = k[b][h][s+8][cw];
-	__syncthreads();
-	
-	scalar_t dq, dk, qq, kk;
-	for(int p = 0; p < 32; p += 16){
-		int w = v + p; 
-		dq = 0.0;
-		t = r; 
-		qq = qc[t][w]; 
-		for(s = 0; s < BLKSIZ; s++){
-			scalar_t ws = qq - kc[s][w];
-			ws = sign(ws) * scale; 
-			dq += ws * dac[t][s]; 
+	for(int wo = 0; wo < width; wo += 32){
+		t = tb * BLKSIZ + cr; 
+		s = sb * BLKSIZ + cr; 
+		int cwo = cw + wo; 
+		qc[cr  ][cw] = q[b][h][t][cwo]; // each thread reads one fp32
+		qc[cr+8][cw] = q[b][h][t+8][cwo];
+		kc[cr  ][cw] = k[b][h][s][cwo]; // full 32-wide load
+		kc[cr+8][cw] = k[b][h][s+8][cwo];
+		__syncthreads();
+		
+		scalar_t dq, dk, qq, kk;
+		for(int p = 0; p < 32; p += 16){
+			int cw = v + p; 
+			dq = 0.0;
+			t = r; 
+			qq = qc[t][cw]; 
+			for(s = 0; s < BLKSIZ; s++){
+				scalar_t ws = qq - kc[s][cw];
+				ws = sign(ws) * scale; 
+				dq += ws * dac[t][s]; 
+			}
+			t = tb * BLKSIZ + r;
+			//d_q[b][t][h][z][w] = dq; 
+			fastAtomicAdd2( d_q, b,h,t,cw+wo, dq ); 
+			// TODO: add another cache level for this.  
+			// will be write cache in the same way above is read-cache. 
+		
+			dk = 0.0; 
+			s = r; 
+			kk = kc[s][cw]; 
+			for(t = 0; t < BLKSIZ; t++){
+				scalar_t ws = qc[t][cw] - kk;
+				ws = sign(ws) * scale; 
+				dk -= ws * dac[t][s]; 
+			}
+			s = sb * BLKSIZ + r; 
+			//d_k[b][s][h][z][w] = dk; 
+			fastAtomicAdd2( d_k, b,h,s,cw+wo, dk ); 
 		}
-		t = tb * BLKSIZ + r;
-		//d_q[b][t][h][z][w] = dq; 
-		fastAtomicAdd2( d_q, b,h,t,w, dq ); // ouch. o/w need too much mem.
-	
-		dk = 0.0; 
-		s = r; 
-		kk = kc[s][w]; 
-		for(t = 0; t < BLKSIZ; t++){
-			scalar_t ws = qc[t][w] - kk;
-			ws = sign(ws) * scale; 
-			dk -= ws * dac[t][s]; 
-		}
-		s = sb * BLKSIZ + r; 
-		//d_k[b][s][h][z][w] = dk; 
-		fastAtomicAdd2( d_k, b,h,s,w, dk ); 
 	}
 }
 
@@ -353,7 +320,7 @@ std::vector<torch::Tensor> l1attn_cuda_forward(
 	double scale = -1.0 / sqrt(width); 
 		
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_forward_kernel", ([&] {
-		l1attn_cuda_forward_kernelX<scalar_t><<<numBlocks, threadsPerBlock>>>(
+		l1attn_cuda_forward_kernel<scalar_t><<<numBlocks, threadsPerBlock>>>(
 			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
@@ -363,7 +330,7 @@ std::vector<torch::Tensor> l1attn_cuda_forward(
 	return {attn};
 }
 
-std::vector<torch::Tensor> l1attn_cuda_forward16(
+std::vector<torch::Tensor> l1attn_cuda_forward32(
 		torch::Tensor q,
 		torch::Tensor k) {
   
@@ -384,8 +351,8 @@ std::vector<torch::Tensor> l1attn_cuda_forward16(
 	
 	double scale = -1.0 / sqrt(width); 
 		
-	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_forward_kernel16", ([&] {
-		l1attn_cuda_forward_kernel16<scalar_t><<<numBlocks, threadsPerBlock>>>(
+	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_forward_kernel32", ([&] {
+		l1attn_cuda_forward_kernel32<scalar_t><<<numBlocks, threadsPerBlock>>>(
 			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
@@ -436,7 +403,7 @@ std::vector<torch::Tensor> l1attn_cuda_backward(
 	return {d_q, d_k};
 }
 
-std::vector<torch::Tensor> l1attn_cuda_backward16(
+std::vector<torch::Tensor> l1attn_cuda_backward32(
 		torch::Tensor d_attn,
 		torch::Tensor q,
 		torch::Tensor k) 
@@ -461,8 +428,8 @@ std::vector<torch::Tensor> l1attn_cuda_backward16(
 	const dim3 numBlocks(zwidth, zwidth, n_heads*bs); // x, y, z
 	const dim3 threadsPerBlock(16, 16, 1); 
 	
-	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_backward_kernel16", ([&] {
-		l1attn_cuda_backward_kernel16<scalar_t><<<numBlocks, threadsPerBlock>>>(
+	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_backward_kernel32", ([&] {
+		l1attn_cuda_backward_kernel32<scalar_t><<<numBlocks, threadsPerBlock>>>(
 			d_attn.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			q.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),
 			k.packed_accessor32<scalar_t,4,torch::RestrictPtrTraits>(),

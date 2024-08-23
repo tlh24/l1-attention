@@ -1,24 +1,21 @@
 import math
-import torch
 from torch import nn
-import torch.nn.functional as F
 from torch.autograd import Function
-import pdb
-
-import l1attn_sparse_drv
-
+import torch
+import l1attn_sparse_bidi_cuda_drv
 
 
-class L1AttnSparseFn(Function):
+class L1AttnSparseBidiFn(Function):
 	@staticmethod
-	def forward(ctx, v, q, k, coo, dst_mxlen, use_softmax):
+	def forward(ctx, vf, vb, q, k, coo, dst_mxlen, use_softmax):
 		# bs, n_ctx, n_heads, width = q.shape
-		v = v.contiguous(); 
-		q = q.contiguous(); 
+		vf = vf.contiguous();
+		vb = vb.contiguous();
+		q = q.contiguous();
 		k = k.contiguous();
-		vo,attn = l1attn_sparse_drv.forward(v, q, k, coo, dst_mxlen, use_softmax)
-		ctx.save_for_backward(v, q, k, coo, attn, torch.tensor(dst_mxlen), torch.tensor(use_softmax))
-		
+		vo,attn = l1attn_sparse_bidi_cuda_drv.forward(vf, vb, q, k, coo, dst_mxlen, use_softmax)
+		ctx.save_for_backward(vf, vb, q, k, coo, attn, torch.tensor(dst_mxlen), torch.tensor(use_softmax))
+
 		# check that the attention is correct
 		bs, n_tok, n_heads, width = q.shape
 		cl = coo.shape[0] # tempted to name it cool (coo_length)
@@ -35,29 +32,30 @@ class L1AttnSparseFn(Function):
 			pdb.set_trace()
 			assert(torch.allclose(attnp_sm, attn))
 			print('python:',attnp_sm)
-			print('cpp:',attn)
+			print('cuda:',attn)
 
 		return vo
 
 	@staticmethod
 	def backward(ctx, dvo):
-		# dvo is always contiguous?  guess so.
-		v,q,k,coo,attn,dst_mxlen,use_softmax = ctx.saved_tensors[:7]
+		# dvo is always contiguous?  not always! 
+		dvo = dvo.contiguous()
+		vf,vb,q,k,coo,attn,dst_mxlen,use_softmax = ctx.saved_tensors[:8]
 		dst_mxlen = dst_mxlen.item()
 		use_softmax = use_softmax.item()
-		
-		d_v, d_q, d_k = l1attn_sparse_drv.backward(dvo, v,q,k,coo,attn,dst_mxlen,use_softmax)
-		return d_v, d_q, d_k, None, None, None
+
+		d_vf, d_vb, d_q, d_k = l1attn_sparse_bidi_cuda_drv.backward(dvo, vf,vb,q,k,coo,attn,dst_mxlen,use_softmax)
+		return d_vf, d_vb, d_q, d_k, None, None, None
 
 
-class L1AttnSparse(nn.Module):
-	def __init__(self):
-		super(L1AttnSparse, self).__init__()
+class L1AttnSparseBidi(nn.Module):
+    def __init__(self):
+        super(L1AttnSparseBidi, self).__init__()
 
-	def forward(self, q, k):
-		return L1AttnSparseFn.apply(q, k)
-		
-
+    def forward(self, vf, vb, q, k, coo, dst_mxlen, use_softmax):
+        return L1AttnSparseBidiFn.apply(vf, vb, q, k, coo, dst_mxlen, use_softmax)
+	  
+	  
 def expandCoo(co):
 	'''
 	take a coordinate vector 'co'

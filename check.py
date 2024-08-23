@@ -32,8 +32,8 @@ else:
 	# width = 7
 	batch_size = 1
 	n_ctx = 16
-	n_heads = 24 # breaks when n_heads > 8!! 
-	width = 16
+	n_heads = 8 
+	width = 64
 
 # # CUDA implemetation of IEEE-754 is not *exactly* like Intel / AMD's
 # # but, if we restrict to multiples of 1/128, everything matches bit-perfectly. 

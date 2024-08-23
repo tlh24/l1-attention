@@ -10,8 +10,11 @@ DTYPE sign(DTYPE x)
 	return x > 0 ? 1 : t;
 }
 
-std::vector<torch::Tensor> l1attnSparse_forward(
-		torch::Tensor v,
+/* Bidirectional sparse attention */
+
+std::vector<torch::Tensor> l1attnSparseBidi_forward(
+		torch::Tensor vf,
+		torch::Tensor vb,
 		torch::Tensor q,
 		torch::Tensor k,
 		torch::Tensor coo,
@@ -27,7 +30,8 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 
 	auto scale = -1.0 / sqrt(width); 
 
-	assert(v.device() == torch::kCPU);
+	assert(vf.device() == torch::kCPU);
+	assert(vb.device() == torch::kCPU);
 	assert(q.device() == torch::kCPU);
 	assert(k.device() == torch::kCPU); 
 	assert(coo.device() == torch::kCPU);
@@ -42,7 +46,8 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 	auto vo = torch::zeros({bs, n_tok, n_heads, width}, options);
 
 	auto coo_acc = coo.accessor<int,2>();
-	auto v_acc = v.accessor<DTYPE,4>();
+	auto vf_acc = vf.accessor<DTYPE,4>();
+	auto vb_acc = vb.accessor<DTYPE,4>();
 	auto q_acc = q.accessor<DTYPE,4>(); 
 	auto k_acc = k.accessor<DTYPE,4>(); 
 	auto attn_acc = attn.accessor<DTYPE,4>(); // save for backward
@@ -76,14 +81,18 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 						attn_acc[b][d][r][h] = exp(attn_acc[b][d][r][h]); 
 				}
 			}
-			// compute vo
+			// compute vfo & vbo, implicitly
 			for(int c = 0; c < cl; c++){
 				int dst = coo_acc[c][0];
 				int src = coo_acc[c][1];
 				int r = coo_acc[c][2];
-				for(int w = 0; w < width; w++){
+				for(int w = 0; w < width; w++){ //gather
 					vo_acc[b][dst][h][w] += 
-						attn_acc[b][dst][r][h] * v_acc[b][src][h][w]; 
+						attn_acc[b][dst][r][h] * vf_acc[b][src][h][w]; 
+				}
+				for(int w = 0; w < width; w++){ //scatter: swap dst,src
+					vo_acc[b][src][h][w] += 
+						attn_acc[b][dst][r][h] * vb_acc[b][dst][h][w]; 
 				}
 			}
 		}
@@ -91,9 +100,10 @@ std::vector<torch::Tensor> l1attnSparse_forward(
 	return {vo, attn}; 
 }
 	
-std::vector<torch::Tensor> l1attnSparse_backward(
+std::vector<torch::Tensor> l1attnSparseBidi_backward(
 		torch::Tensor dvo,
-		torch::Tensor v,
+		torch::Tensor vf,
+		torch::Tensor vb,
 		torch::Tensor q,
 		torch::Tensor k,
 		torch::Tensor coo,
@@ -114,20 +124,23 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 		.device(q.device())
 		.requires_grad(q.requires_grad()); 
 	
-	auto d_v = torch::zeros({bs, n_tok, n_heads, width}, options);
+	auto d_vf = torch::zeros({bs, n_tok, n_heads, width}, options);
+	auto d_vb = torch::zeros({bs, n_tok, n_heads, width}, options);
 	auto d_q = torch::zeros({bs, n_tok, n_heads, width}, options);
 	auto d_k = torch::zeros({bs, n_tok, n_heads, width}, options);
 	auto dattn_sm = torch::zeros({bs, n_tok, dst_mxlen, n_heads}, options);
 	auto dattn = torch::zeros({bs, n_tok, dst_mxlen, n_heads}, options);
 
 	auto dvo_acc = dvo.accessor<DTYPE,4>(); 
-	auto v_acc = v.accessor<DTYPE,4>(); 
+	auto vf_acc = vf.accessor<DTYPE,4>(); 
+	auto vb_acc = vb.accessor<DTYPE,4>(); 
 	auto q_acc = q.accessor<DTYPE,4>(); 
 	auto k_acc = k.accessor<DTYPE,4>();
 	auto coo_acc = coo.accessor<int,2>(); 
 	auto attn_acc = attn.accessor<DTYPE,4>(); 
 	
-	auto dv_acc = d_v.accessor<DTYPE,4>(); 
+	auto dvf_acc = d_vf.accessor<DTYPE,4>();
+	auto dvb_acc = d_vb.accessor<DTYPE,4>();
 	auto dq_acc = d_q.accessor<DTYPE,4>(); 
 	auto dk_acc = d_k.accessor<DTYPE,4>();
 	auto dattn_sm_acc = dattn_sm.accessor<DTYPE,4>();
@@ -139,15 +152,24 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 				int dst = coo_acc[c][0];
 				int src = coo_acc[c][1];
 				int r = coo_acc[c][2];
-				// calc dv -- scale dvo by attn
+				// calc dvf -- scale dvo by attn
 				for(int w = 0; w < width; w++){
-					dv_acc[b][src][h][w] += 
+					dvf_acc[b][src][h][w] += 
 						attn_acc[b][dst][r][h] * dvo_acc[b][dst][h][w]; 
+				}
+				// calc dvb -- scale dvo by attn transpose
+				for(int w = 0; w < width; w++){
+					dvb_acc[b][dst][h][w] += 
+						attn_acc[b][dst][r][h] * dvo_acc[b][src][h][w]; 
 				}
 				// calculate dattn pre-softmax. 
 				for(int w = 0; w < width; w++){
 					dattn_sm_acc[b][dst][r][h] += 
-						v_acc[b][src][h][w] * dvo_acc[b][dst][h][w];
+						vf_acc[b][src][h][w] * dvo_acc[b][dst][h][w];
+				}
+				for(int w = 0; w < width; w++){
+					dattn_sm_acc[b][dst][r][h] += 
+						vb_acc[b][dst][h][w] * dvo_acc[b][src][h][w];
 				}
 			}
 			if(use_softmax){
@@ -186,12 +208,10 @@ std::vector<torch::Tensor> l1attnSparse_backward(
 			}
 		}
 	}
-	return {d_v, d_q, d_k};
+	return {d_vf, d_vb, d_q, d_k};
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("forward", &l1attnSparse_forward, "L1AttnSparse forward");
-  m.def("backward", &l1attnSparse_backward, "L1AttnSparse backward");
+  m.def("forward", &l1attnSparseBidi_forward, "L1AttnSparseBidi forward");
+  m.def("backward", &l1attnSparseBidi_backward, "L1AttnSparseBidi backward");
 }
-
-

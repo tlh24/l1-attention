@@ -8,7 +8,7 @@ std::vector<torch::Tensor> l1attn_cuda_forward(
 		torch::Tensor q,
 		torch::Tensor k );
 
-std::vector<torch::Tensor> l1attn_cuda_forward16(
+std::vector<torch::Tensor> l1attn_cuda_forward32(
 		torch::Tensor q,
 		torch::Tensor k );
 
@@ -18,7 +18,7 @@ std::vector<torch::Tensor> l1attn_cuda_backward(
 		torch::Tensor q,
 		torch::Tensor k);
 
-std::vector<torch::Tensor> l1attn_cuda_backward16(
+std::vector<torch::Tensor> l1attn_cuda_backward32(
 		torch::Tensor d_attn,
 		torch::Tensor q,
 		torch::Tensor k);
@@ -41,11 +41,11 @@ std::vector<torch::Tensor> l1attn_forward(
 	// int n_heads = q.sizes()[2]; 
 	int width = q.sizes()[3];
 	
-	if((n_ctx % 16 == 0) && width == 32){
+	if((n_ctx % 16 == 0) && width % 32 == 0){
 		// q & k come in bthw -> bhtw for better memory access? 
 		q = q.transpose(1, 2).contiguous(); //doesn't seem to make much diff
 		k = k.transpose(1, 2).contiguous();
-		return l1attn_cuda_forward16(q, k);
+		return l1attn_cuda_forward32(q, k);
 	} else {
 		return l1attn_cuda_forward(q, k);
 	}
@@ -67,11 +67,11 @@ std::vector<torch::Tensor> l1attn_backward(
 	// int n_heads = q.sizes()[2]; 
 	int width = q.sizes()[3];
 
-	if((n_ctx % 16 == 0) && width == 32){
+	if((n_ctx % 16 == 0) && width % 32 == 0){
 		d_attn = d_attn.transpose(1,3).contiguous(); // bsth -> bhts
 		q = q.transpose(1,2).contiguous(); // bthw -> bhtw
 		k = k.transpose(1,2).contiguous(); // bshw -> bhsw
-		return l1attn_cuda_backward16(d_attn, q, k); 
+		return l1attn_cuda_backward32(d_attn, q, k); 
 	} else {
 		auto d_attnq = d_attn.transpose(1,3).transpose_(1,2).contiguous();
 					// bsth -> bhts -> bths
