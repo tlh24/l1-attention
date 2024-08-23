@@ -134,50 +134,6 @@ __global__ void l1attn_cuda_forward_kernel32(
 	attn[b][s][t][h] = f * scale; // this is unaligned. ought to fix.
 }
 
-// template <typename scalar_t>
-// __global__ void l1attn_cuda_backward_kernel_old(
-// 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		d_attn,
-// 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		q,
-// 		const torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		k,
-// 		torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		d_q,
-// 		torch::PackedTensorAccessor32<scalar_t,4,torch::RestrictPtrTraits> 
-// 		d_k,
-// 		const scalar_t scale, 
-// 		const int bs, const int n_ctx, const int n_heads, const int width ) 
-// {
-// 	// reduction (across s and t) has to be done within a thread warp: 
-// 	// can't have different warps write the same memory. 
-// 	// they will interfere / not give the correct answer!
-// 	
-// 	int indx = threadIdx.x + blockIdx.x * blockDim.x; // 1D
-// 	
-// 	if(indx < bs*n_ctx*n_ctx*n_heads){
-// 		// again, output indexing b/c thread blocks can't overlap writes.
-// 		// see note in forward kernel.
-// 		int j = indx; 
-// 		int h = j % n_heads; 
-// 		j /= n_heads; 
-// 		int s = j % n_ctx; 
-// 		j /= n_ctx; 
-// 		int t = j % n_ctx; 
-// 		j /= n_ctx; 
-// 		int b = j % bs; 
-// 		
-// 		scalar_t d_a = d_attn[b][s][t][h]; 
-// 		for(int w = 0; w < width; w++){
-// 			scalar_t ws = q[b][t][h][w] - k[b][s][h][w];
-// 			ws = sign(ws) * scale; 
-// 			// atomicAdd((scalar_t*)&(d_q[b][t][h][w]), ws * d_a);
-// 			// atomicAdd((scalar_t*)&(d_k[b][s][h][w]), -1*ws * d_a);
-// 			fastAtomicAdd2(d_q, b,t,h,w, ws * d_a);
-// 			fastAtomicAdd2(d_k, b,s,h,w, -1*ws * d_a);
-// 		}
-// 	}
-// } 
 
 template <typename scalar_t>
 __global__ void l1attn_cuda_backward_kernel(

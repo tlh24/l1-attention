@@ -60,7 +60,7 @@ if __name__ == "__main__":
 	widths = [16, 32, 33, 64, 65, 96, 97, 128]
 
 	results = benchmark_l1attn(batch_size, seq_lengths, widths)
-	filename = f"results.csv"
+	filename = f"results_sai.csv"
 
 	save_results(results, filename)
 	print(f"Benchmark results saved to {filename}")
