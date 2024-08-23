@@ -1,73 +1,66 @@
-from __future__ import division
-from __future__ import print_function
-
-import argparse
-import math
-import time
-
 import torch
+import time
+import l1attn_cuda
+import csv
 
-TIME_SCALES = {'s': 1, 'ms': 1000, 'us': 1000000}
 
-parser = argparse.ArgumentParser()
-parser.add_argument('example', choices=['py', 'cpp', 'cuda'])
-parser.add_argument('-b', '--batch-size', type=int, default=16)
-parser.add_argument('-f', '--features', type=int, default=32)
-parser.add_argument('-s', '--state-size', type=int, default=128)
-parser.add_argument('-r', '--runs', type=int, default=100)
-parser.add_argument('--scale', choices=['s', 'ms', 'us'], default='us')
-parser.add_argument('-c', '--cuda', action='store_true')
-parser.add_argument('-d', '--double', action='store_true')
-options = parser.parse_args()
+def benchmark_l1attn(batch_size, seq_lengths, widths, num_runs=10):
+	device = torch.device("cuda")
+	results = []
+	n_heads=8
+	for seq_length in seq_lengths:
+		forward_times = []
+		backward_times = []
+		for width in widths: 
+			for _ in range(num_runs):
+				q = torch.randn(batch_size, seq_length, n_heads, width, device=device, requires_grad=True)
+				k = torch.randn(batch_size, seq_length, n_heads, width, device=device, requires_grad=True)
 
-if options.example == 'py':
-    from python.lltm import LLTM
-elif options.example == 'cpp':
-    from cpp.lltm import LLTM
-else:
-    from cuda.lltm import LLTM
-    options.cuda = True
+				# Forward pass
+				torch.cuda.synchronize()
+				start_time = time.perf_counter()
+				attn = l1attn_cuda.L1AttnFn.apply(q, k)
+				torch.cuda.synchronize()
+				forward_time = time.perf_counter() - start_time
+				forward_times.append(forward_time)
 
-device = torch.device("cuda") if options.cuda else torch.device("cpu")
-dtype = torch.float64 if options.double else torch.float32
+				# Backward pass
+				grad_output = torch.randn_like(attn)
+				torch.cuda.synchronize()
+				start_time = time.perf_counter()
+				attn.backward(grad_output)
+				torch.cuda.synchronize()
+				backward_time = time.perf_counter() - start_time
+				backward_times.append(backward_time)
 
-kwargs = {'dtype': dtype,
-          'device': device,
-          'requires_grad': True}
-X = torch.randn(options.batch_size, options.features, **kwargs)
-h = torch.randn(options.batch_size, options.state_size, **kwargs)
-C = torch.randn(options.batch_size, options.state_size, **kwargs)
-rnn = LLTM(options.features, options.state_size).to(device, dtype)
+			avg_forward_time = sum(forward_times) / num_runs
+			avg_backward_time = sum(backward_times) / num_runs
+			
+			results.append({
+					'batch_size': batch_size,
+					'seq_length': seq_length,
+					'width': width, 
+					'avg_forward_time': avg_forward_time,
+					'avg_backward_time': avg_backward_time
+			})
 
-# Force CUDA initialization
-new_h, new_C = rnn(X, (h, C))
-(new_h.sum() + new_C.sum()).backward()
+	return results
 
-forward_min = math.inf
-forward_time = 0
-backward_min = math.inf
-backward_time = 0
-for _ in range(options.runs):
-    rnn.zero_grad()
+def save_results(results, filename):
+	with open(filename, 'w', newline='') as csvfile:
+		fieldnames = ['batch_size', 'seq_length', 'width', 'avg_forward_time', 'avg_backward_time']
+		writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+		writer.writeheader()
+		for row in results:
+			writer.writerow(row)
 
-    start = time.time()
-    new_h, new_C = rnn(X, (h, C))
-    elapsed = time.time() - start
-    forward_min = min(forward_min, elapsed)
-    forward_time += elapsed
+if __name__ == "__main__":
+	batch_size = 512
+	seq_lengths = [16, 32, 64, 128, 256]
+	widths = [16, 32, 33, 64, 65, 96, 97, 128]
 
-    start = time.time()
-    (new_h.sum() + new_C.sum()).backward()
-    elapsed = time.time() - start
-    backward_min = min(backward_min, elapsed)
-    backward_time += elapsed
+	results = benchmark_l1attn(batch_size, seq_lengths, widths)
+	filename = f"results.csv"
 
-scale = TIME_SCALES[options.scale]
-forward_min *= scale
-backward_min *= scale
-forward_average = forward_time / options.runs * scale
-backward_average = backward_time / options.runs * scale
-
-print('Forward: {0:.3f}/{1:.3f} {4} | Backward {2:.3f}/{3:.3f} {4}'.format(
-    forward_min, forward_average, backward_min, backward_average,
-    options.scale))
+	save_results(results, filename)
+	print(f"Benchmark results saved to {filename}")
