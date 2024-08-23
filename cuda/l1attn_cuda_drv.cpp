@@ -12,6 +12,10 @@ std::vector<torch::Tensor> l1attn_cuda_forward32(
 		torch::Tensor q,
 		torch::Tensor k );
 
+std::vector<torch::Tensor> l1attn_cuda_forward64(
+		torch::Tensor q,
+		torch::Tensor k );
+
 std::vector<torch::Tensor> l1attn_cuda_backward(
 		torch::Tensor d_attnq,
 		torch::Tensor d_attnk,
@@ -19,6 +23,11 @@ std::vector<torch::Tensor> l1attn_cuda_backward(
 		torch::Tensor k);
 
 std::vector<torch::Tensor> l1attn_cuda_backward32(
+		torch::Tensor d_attn,
+		torch::Tensor q,
+		torch::Tensor k);
+
+std::vector<torch::Tensor> l1attn_cuda_backward64(
 		torch::Tensor d_attn,
 		torch::Tensor q,
 		torch::Tensor k);
@@ -41,7 +50,11 @@ std::vector<torch::Tensor> l1attn_forward(
 	// int n_heads = q.sizes()[2]; 
 	int width = q.sizes()[3];
 	
-	if((n_ctx % 16 == 0) && width % 32 == 0){
+	if((n_ctx % 16 == 0) && width == 64){
+		q = q.transpose(1, 2).contiguous(); //doesn't seem to make much diff
+		k = k.transpose(1, 2).contiguous();
+		return l1attn_cuda_forward64(q, k);
+	} else if((n_ctx % 16 == 0) && width % 32 == 0){
 		// q & k come in bthw -> bhtw for better memory access? 
 		q = q.transpose(1, 2).contiguous(); //doesn't seem to make much diff
 		k = k.transpose(1, 2).contiguous();
@@ -67,7 +80,12 @@ std::vector<torch::Tensor> l1attn_backward(
 	// int n_heads = q.sizes()[2]; 
 	int width = q.sizes()[3];
 
-	if((n_ctx % 16 == 0) && width % 32 == 0){
+	if((n_ctx % 16 == 0) && width == 64){
+		d_attn = d_attn.transpose(1,3).contiguous(); // bsth -> bhts
+		q = q.transpose(1,2).contiguous(); // bthw -> bhtw
+		k = k.transpose(1,2).contiguous(); // bshw -> bhsw
+		return l1attn_cuda_backward64(d_attn, q, k); 
+	} if((n_ctx % 16 == 0) && width % 32 == 0){
 		d_attn = d_attn.transpose(1,3).contiguous(); // bsth -> bhts
 		q = q.transpose(1,2).contiguous(); // bthw -> bhtw
 		k = k.transpose(1,2).contiguous(); // bshw -> bhsw

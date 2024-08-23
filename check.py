@@ -98,10 +98,10 @@ print('Forward: Cuda vs Naive Ok')
 # k = torch.randn(batch_size, n_ctx, n_heads, width, **kwargs)
 # variables = [q, k]
 
-if gradcheck(python.l1attn_baseline.L1AttnFn.apply, variables):
+if gradcheck(python.l1attn_baseline.L1AttnFn.apply, variables, nondet_tol=1e-6):
     print('Backward: Baseline grad Ok')
     
-if gradcheck(l1attn_cpp.L1AttnFn.apply, variables):
+if gradcheck(l1attn_cpp.L1AttnFn.apply, variables, nondet_tol=1e-6):
    print('Backward: Cpp grad Ok')
 
 if gradcheck(l1attn_cuda.L1AttnFn.apply, variables_cuda, nondet_tol=1e-6):
