@@ -5,13 +5,16 @@ rm -rf $(pip cache dir)
 export TORCH_CUDA_ARCH_LIST="8.6" # rtx 3080, A100, Ampere.
 # export TORCH_CUDA_ARCH_LIST="8.9" # rtx 4090, H100 etc
 
-# Backup the original gcc and g++ symlinks
-sudo mv /usr/bin/gcc /usr/bin/gcc.bak
-sudo mv /usr/bin/g++ /usr/bin/g++.bak
+GCC_VERSION=$(gcc -dumpversion | cut -f1 -d.)
+if [ "$GCC_VERSION" -gt 12 ]; then
+	# Backup the original gcc and g++ symlinks
+	sudo mv /usr/bin/gcc /usr/bin/gcc.bak
+	sudo mv /usr/bin/g++ /usr/bin/g++.bak
 
-# Create new symlinks pointing to gcc-12 and g++-12
-sudo ln -s /usr/bin/gcc-12 /usr/bin/gcc
-sudo ln -s /usr/bin/g++-12 /usr/bin/g++
+	# Create new symlinks pointing to gcc-12 and g++-12
+	sudo ln -s /usr/bin/gcc-12 /usr/bin/gcc
+	sudo ln -s /usr/bin/g++-12 /usr/bin/g++
+fi
 
 # Get the site-packages directory
 SITE_PACKAGES_DIR=$(python -c "import site; print(site.getsitepackages()[0])")
@@ -29,6 +32,8 @@ python setup.py install
 python setup_sparse.py install
 python setup_sparse_bidi.py install
 
-# Restore the original gcc and g++ symlinks
-sudo mv -f /usr/bin/gcc.bak /usr/bin/gcc
-sudo mv -f /usr/bin/g++.bak /usr/bin/g++
+if [ "$GCC_VERSION" -gt 12 ]; then
+	# Restore the original gcc and g++ symlinks
+	sudo mv -f /usr/bin/gcc.bak /usr/bin/gcc
+	sudo mv -f /usr/bin/g++.bak /usr/bin/g++
+fi
