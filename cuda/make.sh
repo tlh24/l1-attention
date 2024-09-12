@@ -1,8 +1,9 @@
 #!/usr/bin/sh
-rm -rf build dist *.egg-info
+rm -rf build dist *.egg-info __pycache__
 rm -rf $(pip cache dir)
 
-export TORCH_CUDA_ARCH_LIST="8.9" # rtx 4090, H100 etc
+export TORCH_CUDA_ARCH_LIST="8.6" # rtx 3080, A100, Ampere.
+# export TORCH_CUDA_ARCH_LIST="8.9" # rtx 4090, H100 etc
 
 # Backup the original gcc and g++ symlinks
 sudo mv /usr/bin/gcc /usr/bin/gcc.bak

@@ -87,7 +87,6 @@ print('Forward: Cpp vs Naive Ok')
 # axs[1].imshow(attn_cuda.detach().cpu()[0,:,:,0])
 # axs[2].imshow(na / ca)
 # plt.show()
-
 assert(torch.allclose(attn_naive, attn_cuda.cpu()))
 print('Forward: Cuda vs Naive Ok')
 
