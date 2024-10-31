@@ -474,6 +474,8 @@ std::vector<torch::Tensor> l1attn_cuda_forward(
 	const dim3 threadsPerBlock(32, 1, 1);
 	
 	double scale = -1.0 / sqrt(width); 
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 		
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_forward_kernel", ([&] {
 		l1attn_cuda_forward_kernel<scalar_t><<<numBlocks, threadsPerBlock>>>(
@@ -506,6 +508,8 @@ std::vector<torch::Tensor> l1attn_cuda_forward32(
 	const dim3 threadsPerBlock(BLKSIZ, BLKSIZ, 1);
 	
 	double scale = -1.0 / sqrt(width); 
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 		
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_forward_kernel32", ([&] {
 		l1attn_cuda_forward_kernel32<scalar_t><<<numBlocks, threadsPerBlock>>>(
@@ -538,6 +542,8 @@ std::vector<torch::Tensor> l1attn_cuda_forward64(
 	const dim3 threadsPerBlock(BLKSIZ, BLKSIZ, 1);
 	
 	double scale = -1.0 / sqrt(width); 
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 		
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_forward_kernel64", ([&] {
 		l1attn_cuda_forward_kernel64<scalar_t><<<numBlocks, threadsPerBlock>>>(
@@ -573,6 +579,8 @@ std::vector<torch::Tensor> l1attn_cuda_backward(
 	
 	const dim3 numBlocks(n_heads*n_ctx, width, bs); // x, y, z
 	const dim3 threadsPerBlock(32, 1, 1);
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 	
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_backward_kernel", ([&] {
 		l1attn_cuda_backward_kernel<scalar_t><<<numBlocks, threadsPerBlock>>>(
@@ -612,6 +620,8 @@ std::vector<torch::Tensor> l1attn_cuda_backward32(
 	// const dim3 dimBlocks(32, 8); // x, y, z
 	const dim3 numBlocks(zwidth, zwidth, n_heads*bs); // x, y, z
 	const dim3 threadsPerBlock(16, 16, 1); 
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 	
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_backward_kernel32", ([&] {
 		l1attn_cuda_backward_kernel32<scalar_t><<<numBlocks, threadsPerBlock>>>(
@@ -654,6 +664,8 @@ std::vector<torch::Tensor> l1attn_cuda_backward64(
 	// const dim3 dimBlocks(32, 8); // x, y, z
 	const dim3 numBlocks(zwidth, zwidth, n_heads*bs); // x, y, z
 	const dim3 threadsPerBlock(16, 16, 1); 
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 	
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attn_cuda_backward_kernel64", ([&] {
 		l1attn_cuda_backward_kernel64<scalar_t><<<numBlocks, threadsPerBlock>>>(

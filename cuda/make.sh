@@ -28,10 +28,9 @@ pip uninstall l1attn-cuda
 pip uninstall l1attn-sparse-cuda # !! you need to remove both !! 
 pip uninstall l1attn-sparse-bidi-cuda
 
-python setup.py install &&
-python setup_sparse.py install &&
-python setup_sparse_bidi.py install &&
-wait
+python setup.py install 
+python setup_sparse.py install 
+python setup_sparse_bidi.py install 
 
 if [ "$GCC_VERSION" -gt 12 ]; then
 	# Restore the original gcc and g++ symlinks

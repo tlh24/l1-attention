@@ -18,7 +18,7 @@ setup(
                     "--expt-relaxed-constexpr",
                     "--expt-extended-lambda",
                     "--use_fast_math",
-                    "--ptxas-options=-v", # verbose
+                    # "--ptxas-options=-v", # verbose
                 ]   
             },
         ),

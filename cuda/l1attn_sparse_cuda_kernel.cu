@@ -399,6 +399,8 @@ std::vector<torch::Tensor> l1attnSparse_cuda_forward(
 	int n_blocks = (n_elements + 7) / 8;
 
 	auto scale = -1.0 / sqrt(width); 
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 		
 	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_fwd_attn_kernel", ([&] {
 		l1attnSparse_fwd_attn_kernel<scalar_t><<<n_blocks, dimBlocks>>>(
@@ -475,6 +477,8 @@ std::vector<torch::Tensor> l1attnSparse_cuda_backward(
 	const dim3 dimBlocks(32, 8); // x, y, z
 	int n_elements = bs * n_heads * cl;
 	int n_blocks = (n_elements + 7) / 8;
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 		
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparse_bkwd_dv_dattn_sm_kernel", ([&] {
 		l1attnSparse_bkwd_dv_dattn_sm_kernel<scalar_t><<<n_blocks, dimBlocks>>>(
@@ -674,6 +678,8 @@ std::vector<torch::Tensor> l1attnSparseBidi_cuda_forward(
 	int n_blocks = (n_elements + 7) / 8;
 
 	auto scale = -1.0 / sqrt(width); 
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 		
 	AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "l1attnSparse_fwd_attn_kernel", ([&] {
 		l1attnSparse_fwd_attn_kernel<scalar_t><<<n_blocks, dimBlocks>>>(
@@ -753,6 +759,8 @@ std::vector<torch::Tensor> l1attnSparseBidi_cuda_backward(
 	const dim3 dimBlocks(32, 8); // x, y, z
 	int n_elements = bs * n_heads * cl;
 	int n_blocks = (n_elements + 7) / 8;
+	
+	cudaSetDevice(q.device().index()); // needed?? 
 		
 	AT_DISPATCH_FLOATING_TYPES(q.scalar_type(), "l1attnSparseBidi_bkwd_dvf_dvb_dattn_sm_kernel", ([&] {
 		l1attnSparseBidi_bkwd_dvf_dvb_dattn_sm_kernel<scalar_t><<<n_blocks, dimBlocks>>>(
