@@ -1,0 +1,7 @@
+[build-system]
+requires = ["setuptools", "torch"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "l1attn_cpp"
+version = "0.1.0"
