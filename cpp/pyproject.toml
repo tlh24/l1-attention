@@ -7,4 +7,4 @@ name = "l1attn_cpp"
 version = "0.1.0"
 
 [tool.setuptools]
-py-modules = ["l1attn_cpp", "l1attn_sparse_cpp"]
+py-modules = ["l1attn_cpp", "l1attn_sparse_cpp", "l1attn_sparse_bidi_cpp"]

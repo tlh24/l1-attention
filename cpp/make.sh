@@ -14,8 +14,6 @@ pip uninstall l1attn-cpp # these will print errors
 # pip uninstall l1attn-sparse-cpp # good for pip to note absence?
 # pip uninstall l1attn-sparse-bidi-cpp
 
-# python setup.py install &&
+
 pip install -e .
-# python setup_sparse.py install &&
-# python setup_sparse_bidi.py install &&
 wait
