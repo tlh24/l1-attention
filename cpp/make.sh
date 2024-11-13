@@ -14,6 +14,19 @@ pip uninstall l1attn-cpp # these will print errors
 # pip uninstall l1attn-sparse-cpp # good for pip to note absence?
 # pip uninstall l1attn-sparse-bidi-cpp
 
-
 pip install -e .
 wait
+
+# Check if modules are installed
+echo "Checking installed modules..."
+python -c "
+import importlib.util
+modules = ['l1attn_cpp', 'l1attn_sparse_cpp', 'l1attn_sparse_bidi_cpp', 
+           'l1attn_drv_cpp', 'l1attn_sparse_drv', 'l1attn_sparse_bidi_drv']
+for module in modules:
+    try:
+        __import__(module)
+        print(f'{module}: Installed')
+    except ImportError:
+        print(f'{module}: Not installed')
+"
