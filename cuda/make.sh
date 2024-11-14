@@ -31,3 +31,17 @@ if [ "$GCC_VERSION" -gt 12 ]; then
 	sudo mv -f /usr/bin/gcc.bak /usr/bin/gcc
 	sudo mv -f /usr/bin/g++.bak /usr/bin/g++
 fi
+
+
+echo "Checking installed CUDA modules..."
+python -c "
+import importlib.util
+modules = ['l1attn_cuda', 'l1attn_sparse_cuda', 'l1attn_sparse_bidi_cuda',
+           'l1attn_cuda_drv', 'l1attn_sparse_cuda_drv', 'l1attn_sparse_bidi_cuda_drv']
+for module in modules:
+    try:
+        __import__(module)
+        print(f'{module}: Installed')
+    except ImportError:
+        print(f'{module}: Not installed')
+"
