@@ -22,8 +22,6 @@ SITE_PACKAGES_DIR=$(python -c "import site; print(site.getsitepackages()[0])")
 # Remove any residual files
 rm -rf "$SITE_PACKAGES_DIR/l1attn_cuda"*
 
-pip uninstall l1attn-cuda
-
 pip install -e .
 
 if [ "$GCC_VERSION" -gt 12 ]; then
