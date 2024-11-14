@@ -10,7 +10,7 @@ nvcc_flags = [
 ]
 
 setup(
-    name='l1attn_cuda',
+    name='l1attn_cuda_combined',
     version='0.1.0',
     py_modules=['l1attn_cuda', 'l1attn_sparse_cuda', 'l1attn_sparse_bidi_cuda'],
     ext_modules=[

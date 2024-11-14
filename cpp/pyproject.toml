@@ -3,7 +3,7 @@ requires = ["setuptools", "torch"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "l1attn_cpp"
+name = "l1attn_cpp_combined"
 version = "0.1.0"
 
 [tool.setuptools]
