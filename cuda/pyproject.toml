@@ -1,0 +1,10 @@
+[build-system]
+requires = ["setuptools", "wheel", "torch"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "l1attn_cuda_combined"
+version = "0.1.0"
+
+[tool.setuptools]
+py-modules = ["l1attn_cuda", "l1attn_sparse_cuda", "l1attn_sparse_bidi_cuda"]
