@@ -98,7 +98,7 @@ print('ok')
 
 
 ## TODO
-- ~~ Setup / DistUtils will be deprecated in python 3.12.  I'm not an expert here, so will deal with it when needed. ~~  Fixed in pull request [7](https://github.com/tlh24/l1-attention/pull/7)
+- ~~Setup / DistUtils will be deprecated in python 3.12.  I'm not an expert here, so will deal with it when needed~~  Fixed in pull request [7](https://github.com/tlh24/l1-attention/pull/7)
 - Optimize memory access patterns
 - Merge the 4 packages into one, based on where the tensors are (Cpu or Cuda) and if they are dense or sparse.  
 
