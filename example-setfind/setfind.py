@@ -102,7 +102,7 @@ class ResidualAttentionBlock(nn.Module):
 		
 		# x is [batch, tokens, d_model]
 		batch_size = x.shape[0]
-		ntok = x.shape[1]
+		ntok = x.shape[1]                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  qwwqqqQ
 		width = x.shape[2]
 		
 		q = self.wq(x)
