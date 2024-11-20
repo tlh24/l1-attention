@@ -90,7 +90,6 @@ class ResidualAttentionBlock(nn.Module):
 		self.wk = torch.nn.Parameter( 0.005 * torch.ones(n_head, d_model) )
 		
 		self.l1a_f = l1attn_cuda.L1Attn() # dense or full attention
-		self.soft = torch.nn.Softmax(dim=2) # unused with L1 attn
 		self.fanout = LinearM(d_model, d_model * 1, False)
 		# self.gelu = QuickGELU()
 		self.gelu = nn.ReLU()
@@ -259,8 +258,6 @@ if __name__ == '__main__':
 		
 		model = Transformer(d_model=width, layers=cmd_args.layers, repeat=1, n_head=cmd_args.heads, init_zeros=False)
 		model.printParamCount()
-		# pdb.set_trace()
-		# model.fixedInit()
 		model = model.cuda(cmd_args.d)
 
 		use_adam = cmd_args.a
