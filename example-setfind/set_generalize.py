@@ -7,6 +7,7 @@ If you learn indexing then intersection for one axis,
 does it generalize to different axes?
 Do this with a recurrent tansformer, so there is an opportunity to re-use the heads.
 '''
+import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -137,6 +138,10 @@ class Transformer(nn.Module):
 		print(f"Number of model parameters:{trainable_params}")
 
 if __name__ == '__main__':
+	parser = argparse.ArgumentParser()
+	parser.add_argument('--cuda', type=int, default=0, help='CUDA device')
+	cmd_args = parser.parse_args()
+	
 	bs = 1
 	x,y = genData(bs)
 	x = np.squeeze(x)
@@ -150,7 +155,16 @@ if __name__ == '__main__':
 
 	model = Transformer(d_model=width, layers=1, repeat=1, n_head=1)
 	model.printParamCount()
-	model = model.cuda(cmd_args.d)
+	model = model.cuda(cmd_args.cuda)
 
+	optimizer = psgd.LRA(model.parameters(),lr_params=0.01,\
+					lr_preconditioner= 0.01, momentum=0.9,\
+					preconditioner_update_probability=0.5, \
+					exact_hessian_vector_product=False, \
+					rank_of_approximation=100, grad_clip_max_norm=5.0)
+	
+	fd_losslog = open('losslog.txt', 'w')
+	
+	datx,daty = genData(2000)
 
 
