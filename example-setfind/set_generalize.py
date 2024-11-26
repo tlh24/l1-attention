@@ -153,6 +153,7 @@ if __name__ == '__main__':
 
 	batch_size = cmd_args.b
 	x,y = genData(1)
+
 	x = np.squeeze(x)
 	y = np.squeeze(y)
 	x = x.reshape(16, width)
