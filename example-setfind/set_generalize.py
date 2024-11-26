@@ -19,7 +19,7 @@ import pdb
 
 width = 16
 
-def genData(bs):
+def genData(bs, axis):
 	''' generate a series of datapoints where
 	digits go from 0 to 4
 	x is a 4 x 4 matrix of digits, one-hot encoded
@@ -29,17 +29,32 @@ def genData(bs):
 	x = np.zeros((bs, 4, 4, width)) # middle two dimensions will be flattened to 16
 	y = np.zeros((bs, 4, width))
 	for b in range(bs):
-		for i in range(4):
-			d = np.random.permutation(5)
+		if axis == 0: # sets along rows (j)
+			for i in range(4):
+				d = np.random.permutation(5)
+				for j in range(4):
+					e = d[j]
+					x[b,i,j,e] = 1 # one-hot digit encoding
+					x[b,i,j,5] = i
+					x[b,i,j,6] = j
+				e = d[4]
+				y[b,i,e] = 1
+				y[b,i,5] = i
+				y[b,i,6] = -1
+				y[b,i,7] = 1 # indicate output token
+		if axis == 1: # sets along columns (i)
 			for j in range(4):
-				e = d[j]
-				x[b,i,j,e] = 1 # one-hot digit encoding
-				x[b,i,j,5] = i
-				x[b,i,j,6] = j
-			e = d[4]
-			y[b,i,e] = 1
-			y[b,i,5] = i
-			y[b,i,7] = 1 # indicate output token
+				d = np.random.permutation(5)
+				for i in range(4):
+					e = d[i]
+					x[b,i,j,e] = 1 # one-hot digit encoding
+					x[b,i,j,5] = i
+					x[b,i,j,6] = j
+				e = d[4]
+				y[b,j,e] = 1
+				y[b,j,5] = -1
+				y[b,j,6] = j
+				y[b,j,7] = 1 # indicate output token
 	x = x.reshape((bs, 16, width))
 	return x, y
 
@@ -152,7 +167,7 @@ if __name__ == '__main__':
 	cmd_args = parser.parse_args()
 
 	batch_size = cmd_args.b
-	x,y = genData(1)
+	x,y = genData(1, 0)
 
 	x = np.squeeze(x)
 	y = np.squeeze(y)
@@ -163,7 +178,7 @@ if __name__ == '__main__':
 	print('y')
 	print(y[:,:8])
 
-	model = Transformer(d_model=width, layers=1, repeat=1, n_head=1)
+	model = Transformer(d_model=width, layers=2, repeat=1, n_head=1)
 	model.printParamCount()
 	model = model.cuda(cmd_args.d)
 
@@ -175,32 +190,45 @@ if __name__ == '__main__':
 
 	fd_losslog = open('losslog.txt', 'w')
 
-	x,y = genData(2000)
-	x = torch.tensor(x).float()
-	y = torch.tensor(y).float()
-	x = x.cuda(cmd_args.d)
-	y = y.cuda(cmd_args.d)
+	def train(axis, uu):
+		if False: # data from both distributions
+			x0,y0 = genData(2000, 0)
+			x1,y1 = genData(2000, 1)
+			x = np.concatenate((x0,x1), axis=0)
+			y = np.concatenate((y0,y1), axis=0)
+		else:
+			x,y = genData(2000, axis)
+		x = torch.tensor(x).float()
+		y = torch.tensor(y).float()
+		x = x.cuda(cmd_args.d)
+		y = y.cuda(cmd_args.d)
 
-	for i in range(10000):
-		indx = torch.randperm(2000)
-		indx = indx[:batch_size]
-		yy = y[indx, : , :]
-		yy[:,:, 0:5] = 0 # clear the digit signals
-		xx = torch.cat((x[indx, :, :], yy), axis=1)
-		target = y[indx, : , :]
+		for i in range(2000):
+			indx = torch.randperm(x.shape[0])
+			indx = indx[:batch_size]
+			yy = y[indx, : , :]
+			yy[:,:, 0:5] = 0 # clear the digit signals
+			xx = torch.cat((x[indx, :, :], yy), axis=1)
+			target = y[indx, : , :]
 
-		def closure():
-			y = model(xx)
-			loss = torch.sum( (y[:,-4:,0:5] - target[:,:,0:5])**2 ) + \
-				sum( \
-					[torch.sum(5e-4 * torch.rand_like(param) * torch.abs(param) ) \
-				for param in model.parameters()])
-			return loss
+			def closure():
+				y = model(xx)
+				loss = torch.sum( (y[:,-4:,0:5] - target[:,:,0:5])**2 ) + \
+					sum( \
+						[torch.sum(5e-4 * torch.rand_like(param) * torch.abs(param) ) \
+					for param in model.parameters()])
+				return loss
 
-		loss = optimizer.step(closure)
+			loss = optimizer.step(closure)
+			lloss = loss.detach().cpu().item()
+			if i % 10 == 0:
+				print(lloss)
+				fd_losslog.write(f'{uu}\t{lloss}\n')
+				fd_losslog.flush()
+			uu += 1
+		return uu
 
-		lloss = loss.detach().cpu().item()
-		if i % 10 == 0:
-			print(lloss)
-			fd_losslog.write(f'{i}\t{lloss}\n')
-			fd_losslog.flush()
+	uu = 0
+	for k in range(6):
+		uu = train(0, uu)
+		uu = train(1, uu)
