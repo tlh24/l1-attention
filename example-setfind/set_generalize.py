@@ -7,6 +7,7 @@ If you learn indexing then intersection for one axis,
 does it generalize to different axes?
 Do this with a recurrent tansformer, so there is an opportunity to re-use the heads.
 '''
+import argparse
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -19,8 +20,14 @@ import pdb
 width = 16
 
 def genData(bs):
+	''' generate a series of datapoints where
+	digits go from 0 to 4
+	x is a 4 x 4 matrix of digits, one-hot encoded
+		with the i,j position encoded linearly
+	y is a 4 x 1 matrix of the absent digit per i or j
+	'''
 	x = np.zeros((bs, 4, 4, width)) # middle two dimensions will be flattened to 16
-	y = np.zeros((bs, 4, width)) #
+	y = np.zeros((bs, 4, width))
 	for b in range(bs):
 		for i in range(4):
 			d = np.random.permutation(5)
@@ -32,6 +39,8 @@ def genData(bs):
 			e = d[4]
 			y[b,i,e] = 1
 			y[b,i,5] = i
+			y[b,i,7] = 1 # indicate output token
+	x = x.reshape((bs, 16, width))
 	return x, y
 
 class QuickGELU(nn.Module):
@@ -119,7 +128,7 @@ class Transformer(nn.Module):
 		self.out_proj = nn.Linear(d_model, d_model, bias=True)
 
 	# @torch.compile
-	def forward(self, x:torch.Tensor, hcoo:list):
+	def forward(self, x:torch.Tensor):
 		x = self.in_proj(x)
 		for i in range(self.repeat):
 			for j, layer in enumerate(self.resblocks):
@@ -137,8 +146,13 @@ class Transformer(nn.Module):
 		print(f"Number of model parameters:{trainable_params}")
 
 if __name__ == '__main__':
-	bs = 1
-	x,y = genData(bs)
+	parser = argparse.ArgumentParser()
+	parser.add_argument('-d', type=int, default=0, help='CUDA device')
+	parser.add_argument('-b', type=int, default=128, help='batch size')
+	cmd_args = parser.parse_args()
+
+	batch_size = cmd_args.b
+	x,y = genData(1)
 	x = np.squeeze(x)
 	y = np.squeeze(y)
 	x = x.reshape(16, width)
@@ -152,5 +166,40 @@ if __name__ == '__main__':
 	model.printParamCount()
 	model = model.cuda(cmd_args.d)
 
+	optimizer = psgd.LRA(model.parameters(),\
+			lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
+			preconditioner_update_probability=0.5, \
+			exact_hessian_vector_product=False, \
+			rank_of_approximation=20, grad_clip_max_norm=5.0)
 
+	fd_losslog = open('losslog.txt', 'w')
 
+	x,y = genData(2000)
+	x = torch.tensor(x).float()
+	y = torch.tensor(y).float()
+	x = x.cuda(cmd_args.d)
+	y = y.cuda(cmd_args.d)
+
+	for i in range(10000):
+		indx = torch.randperm(2000)
+		indx = indx[:batch_size]
+		yy = y[indx, : , :]
+		yy[:,:, 0:5] = 0 # clear the digit signals
+		xx = torch.cat((x[indx, :, :], yy), axis=1)
+		target = y[indx, : , :]
+
+		def closure():
+			y = model(xx)
+			loss = torch.sum( (y[:,-4:,0:5] - target[:,:,0:5])**2 ) + \
+				sum( \
+					[torch.sum(5e-4 * torch.rand_like(param) * torch.abs(param) ) \
+				for param in model.parameters()])
+			return loss
+
+		loss = optimizer.step(closure)
+
+		lloss = loss.detach().cpu().item()
+		if i % 10 == 0:
+			print(lloss)
+			fd_losslog.write(f'{i}\t{lloss}\n')
+			fd_losslog.flush()
