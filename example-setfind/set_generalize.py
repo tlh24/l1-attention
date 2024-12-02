@@ -166,5 +166,8 @@ if __name__ == '__main__':
 	fd_losslog = open('losslog.txt', 'w')
 	
 	datx,daty = genData(2000)
+	
+	for i in range(10000):
+		
 
 
