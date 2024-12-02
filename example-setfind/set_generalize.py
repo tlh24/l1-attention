@@ -41,7 +41,7 @@ def genData(bs, axis):
 				y[b,i,e] = 1
 				y[b,i,5] = i
 				y[b,i,6] = -1
-				y[b,i,7] = 1 # indicate output token
+				y[b,i,15] = 1 # indicate output token
 		if axis == 1: # sets along columns (i)
 			for j in range(4):
 				d = np.random.permutation(5)
@@ -54,8 +54,72 @@ def genData(bs, axis):
 				y[b,j,e] = 1
 				y[b,j,5] = -1
 				y[b,j,6] = j
-				y[b,j,7] = 1 # indicate output token
+				y[b,j,15] = 1 # indicate output token
 	x = x.reshape((bs, 16, width))
+	return x, y
+	
+def genData3d(bs, axis):
+	''' generate a series of datapoints where
+	digits go from 0 to 4
+	x is a 4 x 4 matrix of digits, one-hot encoded
+		with the i,j position encoded linearly
+	y is a 4 x 1 matrix of the absent digit per i or j
+	'''
+	x = np.zeros((bs, 4, 4, 4, width)) # middle three dimensions will be flattened to 64
+	y = np.zeros((bs, 4, 4, width))
+	for b in range(bs):
+		# this all could be done more compactly with index permutations, 
+		# but then it might be easier to mess it up! 
+		if axis == 0: # sets along last axis (k)
+			for i in range(4):
+				for j in range(4): 
+					d = np.random.permutation(5)
+					for k in range(4):
+						e = d[k]
+						x[b,i,j,k,e] = 1 # one-hot digit encoding
+						x[b,i,j,k,5] = i
+						x[b,i,j,k,6] = j
+						x[b,i,j,k,7] = k
+					e = d[4]
+					y[b,i,j,e] = 1
+					y[b,i,j,5] = i
+					y[b,i,j,6] = j
+					y[b,i,j,7] = -1
+					y[b,i,j,15] = 1 # indicate output token
+		if axis == 1: # sets along middle axis (j)
+			for i in range(4):
+				for k in range(4): 
+					d = np.random.permutation(5)
+					for j in range(4):
+						e = d[j]
+						x[b,i,j,k,e] = 1 # one-hot digit encoding
+						x[b,i,j,k,5] = i
+						x[b,i,j,k,6] = j
+						x[b,i,j,k,7] = k
+					e = d[4]
+					y[b,i,k,e] = 1
+					y[b,i,k,5] = i
+					y[b,i,k,6] = -1
+					y[b,i,k,7] = k
+					y[b,i,k,15] = 1 # indicate output token
+		if axis == 2: # sets along first axis (i)
+			for j in range(4):
+				for k in range(4): 
+					d = np.random.permutation(5)
+					for i in range(4):
+						e = d[i]
+						x[b,i,j,k,e] = 1 # one-hot digit encoding
+						x[b,i,j,k,5] = i
+						x[b,i,j,k,6] = j
+						x[b,i,j,k,7] = k
+					e = d[4]
+					y[b,j,k,e] = 1
+					y[b,j,k,5] = -1
+					y[b,j,k,6] = j
+					y[b,j,k,7] = k
+					y[b,j,k,15] = 1 # indicate output token
+	x = x.reshape((bs, 64, width))
+	y = y.reshape((bs, 16, width))
 	return x, y
 
 class QuickGELU(nn.Module):
@@ -105,7 +169,8 @@ class ResidualAttentionBlock(nn.Module):
 		# normal dense attention over all tokens
 		# pad out to BLKSIZ tokens (for CUDA kernel).
 		padn = ((ntok + 15) // 16) * 16 - ntok
-		assert(padn > 0) # for noop
+		if padn == 0: 
+			padn = 16
 		qq = torch.cat((q, torch.zeros(batch_size, padn, n_head, width, device=v.device)), axis=1)
 		kk = torch.cat((k, torch.zeros(batch_size, padn, n_head, width, device=v.device)), axis=1)
 		a = self.l1a_f(qq, kk) # includes 1 / sqrt(head)
@@ -189,23 +254,16 @@ if __name__ == '__main__':
 			rank_of_approximation=20, grad_clip_max_norm=5.0)
 
 	fd_losslog = open('losslog.txt', 'w')
-<<<<<<< HEAD
-	
-	datx,daty = genData(2000)
-	
-	for i in range(10000):
-		
-=======
->>>>>>> 74f7d95db2aa452f0f22ec01c2422b4068eabe9d
 
 	def train(axis, uu):
 		if False: # data from both distributions
-			x0,y0 = genData(2000, 0)
-			x1,y1 = genData(2000, 1)
-			x = np.concatenate((x0,x1), axis=0)
-			y = np.concatenate((y0,y1), axis=0)
+			x0,y0 = genData3d(2000, 0)
+			x1,y1 = genData3d(2000, 1)
+			x2,y2 = genData3d(2000, 2)
+			x = np.concatenate((x0,x1,x2), axis=0)
+			y = np.concatenate((y0,y1,y2), axis=0)
 		else:
-			x,y = genData(2000, axis)
+			x,y = genData3d(2000, axis)
 		x = torch.tensor(x).float()
 		y = torch.tensor(y).float()
 		x = x.cuda(cmd_args.d)
@@ -221,10 +279,11 @@ if __name__ == '__main__':
 
 			def closure():
 				y = model(xx)
-				loss = torch.sum( (y[:,-4:,0:5] - target[:,:,0:5])**2 ) + \
+				loss = torch.sum( (y[:,-16:,0:5] - target[:,:,0:5])**2 ) + \
 					sum( \
 						[torch.sum(5e-4 * torch.rand_like(param) * torch.abs(param) ) \
 					for param in model.parameters()])
+				# note that the loss does not include the axis - just the digit
 				return loss
 
 			loss = optimizer.step(closure)
@@ -240,3 +299,4 @@ if __name__ == '__main__':
 	for k in range(6):
 		uu = train(0, uu)
 		uu = train(1, uu)
+		uu = train(2, uu)
