@@ -8,6 +8,7 @@ does it generalize to different axes?
 Do this with a recurrent tansformer, so there is an opportunity to re-use the heads.
 '''
 import argparse
+import itertools
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -121,6 +122,40 @@ def genData3d(bs, axis):
 	x = x.reshape((bs, 64, width))
 	y = y.reshape((bs, 16, width))
 	return x, y
+	
+def genDataNd(bs, dims, axis):
+	
+	x_shape = [bs] + [4] * dims + [width]
+	y_shape = [bs] + [4] * (dims - 1) + [width]
+	x = np.zeros(x_shape)
+	y = np.zeros(y_shape)
+	
+	for b in range(bs): 
+		# cartesian product iterator!
+		for indices in itertools.product(*[range(4) for _ in range(dims-1)]): 
+			d = np.random.permutation(5)
+			for i in range(4):
+				e = int(d[i])
+				indx = list(indices)
+				indx.insert(axis, i)
+				x[tuple([b] + indx + [e])] = 1 # one-hot digit encoding
+				for u in range(dims): 
+					x[tuple([b] + indx + [5+u])] = indx[u] # positional encoding
+			e = int(d[4])
+			indy = list(indices)
+			# don't need to recreate indx
+			y[tuple([b] + indy + [e])] = 1
+			for u in range(dims): 
+				if u == axis: 
+					y[tuple([b] + indy + [5+u])] = -1
+				else: 
+					y[tuple([b] + indy + [5+u])] = indx[u]
+	
+	total_elements = 4 ** dims 
+	x = x.reshape((bs, total_elements, width))
+	y = y.reshape((bs, total_elements//4, width))
+	
+	return x, y
 
 class QuickGELU(nn.Module):
 	def forward(self, x: torch.Tensor):
@@ -232,18 +267,9 @@ if __name__ == '__main__':
 	cmd_args = parser.parse_args()
 
 	batch_size = cmd_args.b
-	x,y = genData(1, 0)
+	# x,y = genDataNd(1, 3, 0)
 
-	x = np.squeeze(x)
-	y = np.squeeze(y)
-	x = x.reshape(16, width)
-	y = y.reshape(4, width)
-	print('x')
-	print(x[:,:8])
-	print('y')
-	print(y[:,:8])
-
-	model = Transformer(d_model=width, layers=2, repeat=1, n_head=1)
+	model = Transformer(d_model=width, layers=1, repeat=1, n_head=2)
 	model.printParamCount()
 	model = model.cuda(cmd_args.d)
 
@@ -256,14 +282,30 @@ if __name__ == '__main__':
 	fd_losslog = open('losslog.txt', 'w')
 
 	def train(axis, uu):
-		if False: # data from both distributions
-			x0,y0 = genData3d(2000, 0)
-			x1,y1 = genData3d(2000, 1)
-			x2,y2 = genData3d(2000, 2)
-			x = np.concatenate((x0,x1,x2), axis=0)
-			y = np.concatenate((y0,y1,y2), axis=0)
+		if True: # data from both distributions
+			if False: 
+				if False: 
+					print('control data gen, 3D')
+					x0,y0 = genData3d(2000, 0)
+					x1,y1 = genData3d(2000, 1)
+					x2,y2 = genData3d(2000, 2)
+				else: 
+					print('generating 3D data')
+					x0,y0 = genDataNd(2000, 3, 0)
+					x1,y1 = genDataNd(2000, 3, 1)
+					x2,y2 = genDataNd(2000, 3, 2)
+				x = np.concatenate((x0,x1,x2), axis=0)
+				y = np.concatenate((y0,y1,y2), axis=0)
+			else: 
+				print('generating 4D data')
+				x0,y0 = genDataNd(2000, 4, 0)
+				x1,y1 = genDataNd(2000, 4, 1)
+				x2,y2 = genDataNd(2000, 4, 2)
+				x3,y3 = genDataNd(2000, 4, 3)
+				x = np.concatenate((x0,x1,x2,x3), axis=0)
+				y = np.concatenate((y0,y1,y2,y3), axis=0)
 		else:
-			x,y = genData3d(2000, axis)
+			x,y = genDataNd(2000, 3, axis)
 		x = torch.tensor(x).float()
 		y = torch.tensor(y).float()
 		x = x.cuda(cmd_args.d)
@@ -273,13 +315,14 @@ if __name__ == '__main__':
 			indx = torch.randperm(x.shape[0])
 			indx = indx[:batch_size]
 			yy = y[indx, : , :]
-			yy[:,:, 0:5] = 0 # clear the digit signals
+			yy[:,:, 0:5] = 0 # clear the digit signals, for the model to fill
 			xx = torch.cat((x[indx, :, :], yy), axis=1)
 			target = y[indx, : , :]
+			ys = y.shape[1]
 
 			def closure():
 				y = model(xx)
-				loss = torch.sum( (y[:,-16:,0:5] - target[:,:,0:5])**2 ) + \
+				loss = torch.sum( (y[:,-ys:,0:5] - target[:,:,0:5])**2 ) + \
 					sum( \
 						[torch.sum(5e-4 * torch.rand_like(param) * torch.abs(param) ) \
 					for param in model.parameters()])
