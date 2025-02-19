@@ -22,7 +22,8 @@ SITE_PACKAGES_DIR=$(python -c "import site; print(site.getsitepackages()[0])")
 # Remove any residual files
 rm -rf "$SITE_PACKAGES_DIR/l1attn_cuda"*
 
-pip install -e .
+echo "no build isolation: be sure to have setuptools, wheel and torch installed."
+pip install --no-build-isolation -e .
 
 if [ "$GCC_VERSION" -gt 12 ]; then
 	# Restore the original gcc and g++ symlinks

@@ -10,7 +10,8 @@ rm -rf "$SITE_PACKAGES_DIR/l1attn_cpp"*
 rm -rf "$SITE_PACKAGES_DIR/l1attn_sparse_cpp"*
 rm -rf "$SITE_PACKAGES_DIR/l1attn_sparse_bidi_cpp"*
 
-pip install -e .
+echo "no build isolation: be sure to have setuptools, wheel and torch installed>
+pip install --no-build-isolation -e .
 wait
 
 
