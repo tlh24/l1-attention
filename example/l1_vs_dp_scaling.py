@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import pdb
 import math
 
-scl = 0.01
+scl = 0.1
 
 if __name__ == '__main__':
 	d = np.arange(0, 21)
