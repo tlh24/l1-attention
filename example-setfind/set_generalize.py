@@ -269,7 +269,7 @@ if __name__ == '__main__':
 	batch_size = cmd_args.b
 	# x,y = genDataNd(1, 3, 0)
 
-	model = Transformer(d_model=width, layers=1, repeat=1, n_head=2)
+	model = Transformer(d_model=width, layers=1, repeat=1, n_head=4)
 	model.printParamCount()
 	model = model.cuda(cmd_args.d)
 
@@ -281,7 +281,7 @@ if __name__ == '__main__':
 
 	fd_losslog = open('losslog.txt', 'w')
 
-	def train(axis, uu):
+	def train(dims, uu):
 		if True: # data from both distributions
 			if False: 
 				if False: 
@@ -297,13 +297,11 @@ if __name__ == '__main__':
 				x = np.concatenate((x0,x1,x2), axis=0)
 				y = np.concatenate((y0,y1,y2), axis=0)
 			else: 
-				print('generating 4D data')
-				x0,y0 = genDataNd(2000, 4, 0)
-				x1,y1 = genDataNd(2000, 4, 1)
-				x2,y2 = genDataNd(2000, 4, 2)
-				x3,y3 = genDataNd(2000, 4, 3)
-				x = np.concatenate((x0,x1,x2,x3), axis=0)
-				y = np.concatenate((y0,y1,y2,y3), axis=0)
+				print(f'generating {dims}D data')
+				lst = [genDataNd(2000, dims, i) for i in range(dims)]
+				xs,ys = [x for x,_ in lst], [y for _,y in lst]
+				x = np.concatenate(xs, axis=0)
+				y = np.concatenate(ys, axis=0)
 		else:
 			x,y = genDataNd(2000, 3, axis)
 		x = torch.tensor(x).float()
@@ -340,6 +338,6 @@ if __name__ == '__main__':
 
 	uu = 0
 	for k in range(6):
-		uu = train(0, uu)
-		uu = train(1, uu)
-		uu = train(2, uu)
+		uu = train(4, uu)
+		uu = train(4, uu)
+		uu = train(4, uu)
