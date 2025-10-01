@@ -99,17 +99,17 @@ __global__ void l1attn_cuda_forward_kernel32(
 	// each block computes a BLKSIZ x BLKSIZ block of the attention matrix
 	// a block is 256 threads
 	// so, each thread loads one value from each q,k
-	__shared__ scalar_t qc[BLKSIZ][32]; // q cache 
-	__shared__ scalar_t kc[BLKSIZ][32]; // k cache
+	__shared__ scalar_t qc[BLKSIZ][32]; // q cache tile
+	__shared__ scalar_t kc[BLKSIZ][32]; // k cache tile
 	
 	//reshape to 8 warps, 32 threads - better mem throughput
-	int tid = u*BLKSIZ + w; 
-	int cw = tid % 32; // cache w (thread)
-	int cu = tid / 32; // cache u (warp)
+	int tid = u*BLKSIZ + w; // this goes 0 .. 256
+	int cw = tid % 32; // cache w (thread), 0..32
+	int cu = tid / 32; // cache u (warp) 0..8
 	
 	scalar_t f = 0.0; 
 	int t,s; 
-	for(int wo = 0; wo < width; wo += 32){
+	for(int wo = 0; wo < width; wo += 32){ // wo is w offset
 		t = tb * BLKSIZ + cu; 
 		s = sb * BLKSIZ + cu; 
 		int cwo = cw + wo; 

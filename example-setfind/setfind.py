@@ -15,8 +15,6 @@ import pdb
 import psgd_20240805 as psgd
 import time
 
-npos = 10
-ntok = npos + 4
 width = 16
 
 class QuickGELU(nn.Module):
@@ -37,11 +35,12 @@ class LinearM(nn.Module):
 	def forward(self, x):
 		return torch.einsum('oi,bhi -> bho', self.w[:,:-1], x) + self.w[:,-1]
 
-def genData(nn, cmd_args): 
+def genData(nn, npos, cmd_args):
+	ntok = npos + 4
 	y = torch.zeros(nn, ntok, width)
 	target = torch.zeros(nn,2)
 	lin = torch.arange(0,npos)
-	x = torch.zeros(npos, width)
+	x = torch.zeros(npos, width) # position encoding
 	# binary encoding of the digits.  
 	x[:,0] = (lin % 2) * 10
 	x[:,1] = ((lin//2) % 2) * 10
@@ -51,9 +50,10 @@ def genData(nn, cmd_args):
 	for n in range(nn): 
 		# shuffle tokens
 		indx = torch.randperm(npos)
-		y[n,0:npos,:] = x[indx, :]
+		y[n,0:npos,:] = x[indx, :] # permute the digits
 		# add linear positional encoding
 		y[n,0:npos,5] = lin
+		y[n,0:npos,6] = 10 # search over these
 		if cmd_args.x: 
 			indx2 = torch.randperm(npos)
 			y[n,0:npos,11] = torch.fmod(lin[indx2], 3) * 10 / 2 # distractors!!
@@ -61,7 +61,6 @@ def genData(nn, cmd_args):
 			y[n,0:npos,13] = torch.fmod(lin[indx2], 5) * 10 / 4
 			y[n,0:npos,14] = torch.fmod(lin[indx2], 6) * 10 / 5
 			y[n,0:npos,15] = torch.fmod(lin[indx2], 7) * 10 / 6
-		y[n,0:npos,6] = 10 # search over these
 		curs = np.random.randint(0,npos)
 		# print("cursor",curs)
 		y[n,npos,5] = curs
@@ -236,8 +235,11 @@ if __name__ == '__main__':
 	parser.add_argument('-l', action='store_true', default=False, help='use PSGD LRA')
 	parser.add_argument('-m', action='store_true', help='many-mode - limit reporting and write results to file. ')
 	parser.add_argument('-x', action='store_true', help='add distractors to make learning task harder.')
+	parser.add_argument('--npos', type=int, default=10, help='number of positions to search over')
 	cmd_args = parser.parse_args()
 	sample_size = cmd_args.b
+	npos = cmd_args.npos
+	ntok = npos + 4
 	
 	if False:
 		fig,axs = plt.subplots(3, 3, figsize=(20,20))
@@ -285,12 +287,12 @@ if __name__ == '__main__':
 		
 		fd_losslog = open('losslog.txt', 'w')
 		
-		dat,_ = genData(2000, cmd_args)
+		dat,_ = genData(2000, npos, cmd_args)
 		mean = torch.sum(dat, (0,1)) / (2000 * ntok)
 		std = torch.sqrt(torch.sum((dat - mean)**2, (0,1)) / (2000 * ntok))
 		std = std / 3.5 # help l1 attn select one
 		
-		x,target = genData(sample_size, cmd_args)
+		x,target = genData(sample_size, npos, cmd_args)
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
 		
@@ -325,7 +327,7 @@ if __name__ == '__main__':
 		j = j + 1
 			
 	
-		x,target = genData(1000, cmd_args)
+		x,target = genData(1000, npos, cmd_args)
 		# x = (x - mean) / std # learn the affine transform later
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
@@ -338,7 +340,7 @@ if __name__ == '__main__':
 			fd_losslog.flush()
 	
 		if cmd_args.m: 
-			fd_vallog = open(f'vallog_2nd_3x_l{cmd_args.layers}_h{cmd_args.heads}.txt', 'a')
+			fd_vallog = open(f'vallog_l{cmd_args.layers}_h{cmd_args.heads}_npos{npos}.txt', 'a')
 			fd_vallog.write(f'{sample_size}\t{lloss/1000}\n') 
 			fd_vallog.flush()
 			fd_vallog.close()
