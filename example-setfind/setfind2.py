@@ -15,7 +15,7 @@ import pdb
 import psgd_20240805 as psgd
 import time
 
-width = 24
+width = 64
 
 class QuickGELU(nn.Module):
 	def forward(self, x: torch.Tensor):
@@ -35,45 +35,48 @@ class LinearM(nn.Module):
 	def forward(self, x):
 		return torch.einsum('oi,bhi -> bho', self.w[:,:-1], x) + self.w[:,-1]
 
-def genData(nn, npos, cmd_args):
-	ntok = npos + 4
-	y = torch.zeros(nn, ntok, width)
-	target = torch.zeros(nn,2)
+def graycodePosEnc(ntok, nbits, rand_phase=False):
+	'''
+	Generate a graycode
+	seems more principled than standard SPE?
+	'''
+	pos_enc = np.zeros((ntok,nbits*2), dtype=np.float32)
+	indx = np.linspace(0, (ntok-1)*2*math.pi, ntok)
+	if rand_phase:
+		phase_offset = np.random.uniform() * 2 * math.pi
+	else:
+		phase_offset = 0
+	for i in range(nbits):
+		# gray code: [0][1] has a period of 4
+		# [2][3] has a period of sqrt(4*8) = sqrt(32) = 4 sqrt(2)
+		# [4][5] period of 8..
+		# period = 4 * (math.sqrt(2.0))**i
+		#   above is slower - does not help?
+		period = 4 * 2.0**i
+		if True:
+			# sinusoidal, seems to work better?
+			pos_enc[:, 2*i  ] = -np.cos(indx / period + phase_offset)
+			pos_enc[:, 2*i+1] = np.sin(indx / period + phase_offset)
+		else:
+			# graycode! (thresholded)
+			pos_enc[:, 2*i  ] = np.cos(indx / period + phase_offset) < 0
+			pos_enc[:, 2*i+1] = np.sin(indx / period + phase_offset) < 0
+	return pos_enc
+
+def genData(bs, npos, cursor, cmd_args):
+	ntok = npos + 1
+	target = torch.zeros(bs,width)
 	lin = torch.arange(0,npos)
-	x = torch.zeros(npos, width) # position encoding
+	x = torch.zeros(bs,ntok, width) # position encoding
 	# binary encoding of the digits.  
-	x[:,0] = (lin % 2) * 10
-	x[:,1] = ((lin//2) % 2) * 10
-	x[:,2] = ((lin//4) % 2) * 10
-	x[:,3] = ((lin//8) % 2) * 10
-	x[:,4] = ((lin//16) % 2) * 10
-	x[:,5] = ((lin//32) % 2) * 10
-	x[:,6] = ((lin//64) % 2) * 10
-	x[:,7] = ((lin//128) % 2) * 10
-	for n in range(nn): 
-		# shuffle tokens
-		indx = torch.randperm(npos)
-		y[n,0:npos,:] = x[indx, :] # permute the digit order
-		# add linear positional encoding
-		y[n,0:npos,8] = lin
-		y[n,0:npos,9] = 10 # indicate this is the set: search over these
-		if cmd_args.x: 
-			indx2 = torch.randperm(npos)
-			for k in range(5):
-				y[n,0:npos, 14+k] = torch.fmod(lin[indx2], 3+k) * 10 / (2+k)
-		curs = np.random.randint(0,npos)
-		# print("cursor",curs)
-		y[n,npos,8] = curs
-		y[n,npos,10] = 10 # cursor token
-		y[n,npos+1,11] = 10 # spare token?
-		y[n,npos+2,12] = 10 # spare token?
-		y[n,npos+3,13] = 10 # reward token / target
-		
-		# distance output on y[:,-1,4]
-		target[n,0] = (curs - torch.argmin(indx)) # we're matching to the zero digit.
-		target[n,1] = abs(target[n,0])
-		# target[n] = curs - torch.argmin(indx)
-	return y,target
+	x[:,:npos,0:16] = torch.tensor(graycodePosEnc(npos, 8)*10)
+	x[:,:npos, 16] = 10 # indicate this is the set: search over these
+	x[:,:npos, 17:-1] = torch.randn(bs,npos, width-18)*5
+	x[:,npos, -1] = 10 # where we measure the loss.
+	target = torch.zeros(bs,width)
+	idx = torch.arange(bs)
+	target[idx, 17:32] = x[idx, cursor, 17:32]
+	return x,target
 	
 	
 class ResidualAttentionBlock(nn.Module): 
@@ -198,17 +201,21 @@ class ResidualAttentionBlock(nn.Module):
 class Transformer(nn.Module): 
 	def __init__(self, d_model:int, layers:int, repeat:int, n_head:int, init_zeros:bool):
 		super().__init__()
+		gendata_dim = width
 		self.d_model = d_model
 		self.n_head = n_head
 		self.layers = layers
 		self.repeat = repeat
 		self.resblocks = nn.ModuleList([ResidualAttentionBlock(d_model, n_head, init_zeros) for _ in range(layers)])
+		self.in_proj = LinearM(gendata_dim, d_model, False)
+		self.out_proj = LinearM(d_model, gendata_dim, False)
 
 	def forward(self, x:torch.Tensor):
+		x = self.in_proj(x)
 		for i in range(self.repeat): 
 			for j, layer in enumerate(self.resblocks):
 				x = layer(x)
-		return x
+		return self.out_proj(x)
 
 	def plot(self, x): 
 		for j, layer in enumerate(self.resblocks):
@@ -241,12 +248,14 @@ if __name__ == '__main__':
 	sample_size = cmd_args.b
 	npos = cmd_args.npos
 	ntok = npos + 4
+
+	cursor = np.random.randint(npos)
 	
 	if cmd_args.t:
 		fig,axs = plt.subplots(3, 3, figsize=(20,20))
 		for i in range(3): 
 			for j in range(3):
-				y,target = genData(1, npos, cmd_args)
+				y,target = genData(1, npos, cursor, cmd_args)
 				y = y.squeeze().numpy()
 				target = target.squeeze().numpy()
 				im = axs[i,j].imshow(y)
@@ -258,11 +267,12 @@ if __name__ == '__main__':
 	start_time = time.time()
 	duration = 300 
 	j = 0
+	smooth_loss = 0.0
 	if not cmd_args.m: 
 		j = 199
 	while j < 200: 
 		
-		model = Transformer(d_model=width, layers=cmd_args.layers, repeat=1, n_head=cmd_args.heads, init_zeros=False)
+		model = Transformer(d_model=128, layers=cmd_args.layers, repeat=1, n_head=cmd_args.heads, init_zeros=False)
 		model.printParamCount()
 		# pdb.set_trace()
 		# model.fixedInit()
@@ -277,7 +287,7 @@ if __name__ == '__main__':
 				optimizer = psgd.LRA(model.parameters(),lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
 					preconditioner_update_probability=0.5, exact_hessian_vector_product=False, rank_of_approximation=100, grad_clip_max_norm=5.0)
 			else: 
-				optimizer = psgd.Affine(model.parameters(),lr_params=0.01,lr_preconditioner= 0.01, momentum=0.9,\
+				optimizer = psgd.Affine(model.parameters(),lr_params=0.01,lr_preconditioner=0.01, momentum=0.9,\
 					preconditioner_max_size=200000, \
 					preconditioner_max_skew=200000, \
 					preconditioner_update_probability=0.5, exact_hessian_vector_product=False, grad_clip_max_norm=5.0)
@@ -290,12 +300,12 @@ if __name__ == '__main__':
 		
 		fd_losslog = open('losslog.txt', 'w')
 		
-		dat,_ = genData(2000, npos, cmd_args)
-		mean = torch.sum(dat, (0,1)) / (2000 * ntok)
-		std = torch.sqrt(torch.sum((dat - mean)**2, (0,1)) / (2000 * ntok))
-		std = std / 3.5 # help l1 attn select one
+		# dat,_ = genData(2000, npos, cmd_args)
+		# mean = torch.sum(dat, (0,1)) / (2000 * ntok)
+		# std = torch.sqrt(torch.sum((dat - mean)**2, (0,1)) / (2000 * ntok))
+		# std = std / 3.5 # help l1 attn select one
 		
-		x,target = genData(sample_size, npos, cmd_args)
+		x,target = genData(sample_size, npos, cursor, cmd_args)
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
 		
@@ -304,38 +314,42 @@ if __name__ == '__main__':
 			targetx = target
 			if use_adam:
 				y = model(xx)
-				loss = torch.sum( (y[:,-1,-2:] - targetx)**2 )
+				loss = torch.sum( (y[:,-1,:] - targetx)**2 )
 				torch.nn.utils.clip_grad_norm_(model.parameters(), 0.8)
 				loss.backward()
 				optimizer.step()
 			else: 
 				def closure(): 
 					y = model(xx)
-					loss = torch.sum( (y[:,-1,-2:] - targetx)**2 ) # + \
+					loss = torch.sum( (y[:,-1,:] - targetx)**2 ) # + \
 							# sum( \
 							# [torch.sum(5e-4 * torch.rand_like(param) * torch.abs(param) ) for param in model.parameters()])
 					return loss
 				loss = optimizer.step(closure) 
 			lloss = loss.detach().cpu().item()
+			smooth_loss = 0.95*smooth_loss + 0.05*lloss
 		
 			if not cmd_args.m: 
 				if i % 10 == 0: 
 					print(lloss)
 					fd_losslog.write(f'{i}\t{lloss}\n')
 					fd_losslog.flush()
-			elapsed_time = time.time() - start_time
-			if elapsed_time > duration :
-				j = 200
-				break
-		j = j + 1
+				elapsed_time = time.time() - start_time
+				if elapsed_time > duration :
+					j = 200
+					break
+		if cmd_args.m:
+			j = j + 67
+		else:
+			j = j + 1
 			
 	
-		x,target = genData(1000, npos, cmd_args)
+		x,target = genData(1000, npos, cursor, cmd_args)
 		# x = (x - mean) / std # learn the affine transform later
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
 		y = model(x)
-		loss = torch.sum( (y[:,-1,-2:] - target)**2 )
+		loss = torch.sum( (y[:,-1,:] - target)**2 )
 		lloss = loss.detach().cpu().item()
 		print("v",lloss)
 		if not cmd_args.m: 
@@ -343,8 +357,11 @@ if __name__ == '__main__':
 			fd_losslog.flush()
 	
 		if cmd_args.m: 
-			fd_vallog = open(f'vallog_l{cmd_args.layers}_h{cmd_args.heads}_npos{npos}.txt', 'a')
-			fd_vallog.write(f'{sample_size}\t{lloss/1000}\n') 
+			optstr = 'psgd'
+			if cmd_args.a:
+				optstr = 'adam'
+			fd_vallog = open(f'vallog_x3_{optstr}_l{cmd_args.layers}_h{cmd_args.heads}_npos{npos}.txt', 'a')
+			fd_vallog.write(f'{sample_size}\t{lloss/1000}\t{smooth_loss/sample_size}\n')
 			fd_vallog.flush()
 			fd_vallog.close()
 	
