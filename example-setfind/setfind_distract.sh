@@ -36,6 +36,9 @@ for data_size in "${data_sizes[@]}"; do
 		run_script $data_size 1 2 1 16 64 &
 		run_script $data_size 0 2 1 16 96 &
 		wait
+		run_script $data_size 1 2 1 16 128 &
+		run_script $data_size 0 2 1 16 128 &
+		wait
 	else
 		run_script $data_size 0 2 1 16 64 &
 		run_script $data_size 0 2 1 16 96 &
