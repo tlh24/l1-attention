@@ -2,8 +2,8 @@
 
 # Array of training data sizes
 # data_sizes=(32 48 64 80 96 128 160 192 224 256 320 384 448 512 640 768)
-# data_sizes=(32 64 128 256 512 1024 2048 4096)
-data_sizes=(4096)
+data_sizes=(32 64 128 256 512 1024 2048 4096)
+# data_sizes=(4096)
 
 # Function to run the script with specified parameters
 run_script() {
