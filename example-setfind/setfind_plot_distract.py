@@ -67,7 +67,7 @@ def create_plot(ax, layers, heads, npos, distract, color):
 	# Plot median for each data size
 	ax.scatter(grouped_data["data_size"], grouped_data["validation"], c=color, s=120, edgecolors='w')
 	
-	ax.plot(grouped_data["data_size"], grouped_data["validation"], color=color, alpha=0.7, linewidth=3, label=f'Set size {npos}')
+	ax.plot(grouped_data["data_size"], grouped_data["validation"], color=color, alpha=0.7, linewidth=3, label=f'Distractor dims {distract}')
 
 	ax.set_title(f'Validaton vs set size vs sample size')
 	ax.set_xlabel('Training data size')
