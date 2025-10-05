@@ -25,7 +25,6 @@ layers_heads_npos_set = [
     (1, 2, 32),
     (1, 2, 64),
     (1, 2, 128),
-    (1, 2, 192),
     (1, 2, 256),
 ]
 
@@ -43,15 +42,15 @@ colors = [
 ] # gemini came up with this
 
 # Create a figure and axes for subplots
-plt.rcParams['font.size'] = 16
-plt.rcParams['figure.dpi'] = 72
+plt.rcParams['font.size'] = 20
+plt.rcParams['figure.dpi'] = 120
 fig, axes = plt.subplots(nrows=1, ncols=1, figsize=(20, 12))
 # axes = axes.flatten()
 
 # Function to create a scatter plot for a given heads and layers configuration
 def create_plot(ax, layers, heads, npos, color):
 	# Read the data from the file and store it in a DataFrame
-	data = pd.read_csv(f"vallog_x3_psgd_l{layers}_h{heads}_npos{npos}.txt", sep="\t", header=None, names=["data_size", "validation", "train_loss"])
+	data = pd.read_csv(f"vallog_x4_psgd_l{layers}_h{heads}_npos{npos}.txt", sep="\t", header=None, names=["data_size", "validation", "train_loss"])
 
 	# remove outliers in the median calc (as you would anyway)
 	filtered_data = data[data["validation"] < 1000]
@@ -61,14 +60,14 @@ def create_plot(ax, layers, heads, npos, color):
 	# Create the scatter plot with a logarithmic y-axis
 	ax.scatter(data["data_size"], data["validation"], c=color, alpha=0.5, edgecolors='w', s=100)
 
-	ax.scatter(data["data_size"], data["train_loss"], c=color, alpha=0.5, edgecolors='w', s=50)
+	ax.scatter(data["data_size"], data["train_loss"], c=color, alpha=0.5, edgecolors='w', s=40)
 
 	# Plot median for each data size
-	ax.scatter(grouped_data["data_size"], grouped_data["validation"], c=color, s=100, edgecolors='w')
+	ax.scatter(grouped_data["data_size"], grouped_data["validation"], c=color, s=120, edgecolors='w')
 	
-	ax.plot(grouped_data["data_size"], grouped_data["validation"], color=color, alpha=0.7, label=f'{layers}l, {heads}h {npos}npos- median')
+	ax.plot(grouped_data["data_size"], grouped_data["validation"], color=color, alpha=0.7, linewidth=3, label=f'Set size {npos}')
 
-	ax.set_title(f'{layers} layers, {heads} heads, {npos} positions, 15k iters')
+	ax.set_title(f'Validaton vs set size vs sample size')
 	ax.set_xlabel('Training data size')
 	ax.set_ylabel('Validation')
 	ax.set_ylim(10**-3, 5e3)

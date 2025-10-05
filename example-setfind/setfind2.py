@@ -360,7 +360,7 @@ if __name__ == '__main__':
 			optstr = 'psgd'
 			if cmd_args.a:
 				optstr = 'adam'
-			fd_vallog = open(f'vallog_x3_{optstr}_l{cmd_args.layers}_h{cmd_args.heads}_npos{npos}.txt', 'a')
+			fd_vallog = open(f'vallog_x4_{optstr}_l{cmd_args.layers}_h{cmd_args.heads}_npos{npos}.txt', 'a')
 			fd_vallog.write(f'{sample_size}\t{lloss/1000}\t{smooth_loss/sample_size}\n')
 			fd_vallog.flush()
 			fd_vallog.close()
