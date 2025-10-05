@@ -15,8 +15,6 @@ import pdb
 import psgd_20240805 as psgd
 import time
 
-width = 64
-
 class QuickGELU(nn.Module):
 	def forward(self, x: torch.Tensor):
 		return x * torch.sigmoid(1.702 * x)
@@ -63,7 +61,7 @@ def graycodePosEnc(ntok, nbits, rand_phase=False):
 			pos_enc[:, 2*i+1] = np.sin(indx / period + phase_offset) < 0
 	return pos_enc
 
-def genData(bs, npos, cursor, cmd_args):
+def genData(bs, npos, width, cursor, cmd_args):
 	ntok = npos + 1
 	target = torch.zeros(bs,width)
 	lin = torch.arange(0,npos)
@@ -199,9 +197,8 @@ class ResidualAttentionBlock(nn.Module):
 	
 	
 class Transformer(nn.Module): 
-	def __init__(self, d_model:int, layers:int, repeat:int, n_head:int, init_zeros:bool):
+	def __init__(self, d_model:int, layers:int, repeat:int, n_head:int, init_zeros:bool, gendata_dim:int):
 		super().__init__()
-		gendata_dim = width
 		self.d_model = d_model
 		self.n_head = n_head
 		self.layers = layers
@@ -237,17 +234,18 @@ if __name__ == '__main__':
 	parser.add_argument('-b', type=int, default=128, help='training data size')
 	parser.add_argument('-d', type=int, default=0, help='CUDA device')
 	parser.add_argument('--layers', type=int, default=1, help='number of layers')
-	parser.add_argument('--heads', type=int, default=1, help='number of heads')
+	parser.add_argument('--heads', type=int, default=2, help='number of heads')
 	parser.add_argument('-a', action='store_true', help='use AdamW')
 	parser.add_argument('-l', action='store_true', default=False, help='use PSGD LRA')
 	parser.add_argument('-m', action='store_true', help='many-mode - limit reporting and write results to file. ')
-	parser.add_argument('-x', action='store_true', help='add distractors to make learning task harder.')
-	parser.add_argument('--npos', type=int, default=10, help='number of positions to search over')
+	parser.add_argument('--npos', type=int, default=16, help='number of positions to search over')
+	parser.add_argument('--distract', type=int, default=8, help='distractor dims')
 	parser.add_argument('-t', action='store_true', help='do a test plot.')
 	cmd_args = parser.parse_args()
 	sample_size = cmd_args.b
 	npos = cmd_args.npos
 	ntok = npos + 4
+	width = cmd_args.distract + 32
 
 	cursor = np.random.randint(npos)
 	
@@ -255,7 +253,7 @@ if __name__ == '__main__':
 		fig,axs = plt.subplots(3, 3, figsize=(20,20))
 		for i in range(3): 
 			for j in range(3):
-				y,target = genData(1, npos, cursor, cmd_args)
+				y,target = genData(1, npos, width, cursor, cmd_args)
 				y = y.squeeze().numpy()
 				target = target.squeeze().numpy()
 				im = axs[i,j].imshow(y)
@@ -272,7 +270,7 @@ if __name__ == '__main__':
 		j = 199
 	while j < 200: 
 		
-		model = Transformer(d_model=128, layers=cmd_args.layers, repeat=1, n_head=cmd_args.heads, init_zeros=False)
+		model = Transformer(d_model=160, layers=cmd_args.layers, repeat=1, n_head=cmd_args.heads, init_zeros=False, gendata_dim=width)
 		model.printParamCount()
 		# pdb.set_trace()
 		# model.fixedInit()
@@ -305,7 +303,7 @@ if __name__ == '__main__':
 		# std = torch.sqrt(torch.sum((dat - mean)**2, (0,1)) / (2000 * ntok))
 		# std = std / 3.5 # help l1 attn select one
 		
-		x,target = genData(sample_size, npos, cursor, cmd_args)
+		x,target = genData(sample_size, npos, width, cursor, cmd_args)
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
 		
@@ -344,7 +342,7 @@ if __name__ == '__main__':
 			j = j + 1
 			
 	
-		x,target = genData(1000, npos, cursor, cmd_args)
+		x,target = genData(1000, npos, width, cursor, cmd_args)
 		# x = (x - mean) / std # learn the affine transform later
 		x = x.cuda(cmd_args.d)
 		target = target.cuda(cmd_args.d)
@@ -360,7 +358,7 @@ if __name__ == '__main__':
 			optstr = 'psgd'
 			if cmd_args.a:
 				optstr = 'adam'
-			fd_vallog = open(f'vallog_x4_{optstr}_l{cmd_args.layers}_h{cmd_args.heads}_npos{npos}.txt', 'a')
+			fd_vallog = open(f'vallog_x5_{optstr}_l{cmd_args.layers}_h{cmd_args.heads}_npos{npos}_width{width}.txt', 'a')
 			fd_vallog.write(f'{sample_size}\t{lloss/1000}\t{smooth_loss/sample_size}\n')
 			fd_vallog.flush()
 			fd_vallog.close()
