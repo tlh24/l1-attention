@@ -13,7 +13,7 @@ run_script() {
 	local layers=$4
 	local npos=$5
 	local distract=$6
-	echo "Run $run_id for data size $data_size, heads $heads, layers $layers npos $npos on GPU $gpu_id"
+	echo "Run $run_id for data size $data_size, heads $heads, layers $layers npos $npos distract $distract on GPU $gpu_id"
 	python setfind2.py -m -b $data_size -d $gpu_id --heads $heads --layers $layers --npos $npos --distract $distract
 }
 
