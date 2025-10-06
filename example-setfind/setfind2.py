@@ -270,7 +270,7 @@ if __name__ == '__main__':
 		j = 199
 	while j < 200: 
 		
-		model = Transformer(d_model=160, layers=cmd_args.layers, repeat=1, n_head=cmd_args.heads, init_zeros=False, gendata_dim=width)
+		model = Transformer(d_model=128, layers=cmd_args.layers, repeat=1, n_head=cmd_args.heads, init_zeros=False, gendata_dim=width)
 		model.printParamCount()
 		# pdb.set_trace()
 		# model.fixedInit()
