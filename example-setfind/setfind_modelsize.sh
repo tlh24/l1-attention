@@ -25,12 +25,12 @@ for data_size in "${data_sizes[@]}"; do
 	echo "Running with data size: $data_size"
 
 	if [ "$NUM_GPUS" -ge 2 ]; then
-# 		run_script $data_size 1 2 1 16 0 & # gpu, heads, layers, npos, distract
-# 		run_script $data_size 0 2 1 16 8 &
-#
-# 		run_script $data_size 1 2 1 16 16 & # run these all in parallel
-# 		run_script $data_size 0 2 1 16 24 & # saturate the GPUs
-# 		wait
+		run_script $data_size 1 1 1 16 0 & # gpu, heads, layers, npos, distract
+		run_script $data_size 0 2 1 16 8 &
+
+		run_script $data_size 1 2 1 16 16 & # run these all in parallel
+		run_script $data_size 0 2 1 16 24 & # saturate the GPUs
+		wait
 		run_script $data_size 1 2 1 16 32 &
 		run_script $data_size 0 2 1 16 48 &
 
