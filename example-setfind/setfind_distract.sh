@@ -41,19 +41,20 @@ for data_size in "${data_sizes[@]}"; do
 		run_script $data_size 0 2 1 16 256 &
 		wait
 	else
-		run_script $data_size 0 2 1 16 32 &
-		run_script $data_size 0 2 1 16 48 &
-		wait
-		run_script $data_size 0 2 1 16 96 & # gpu, heads, layers, npos, distract
-		run_script $data_size 0 2 1 16 128 &
-		wait
+# 		run_script $data_size 0 2 1 16 32 &
+# 		run_script $data_size 0 2 1 16 48 &
+# 		wait
+# 		run_script $data_size 0 2 1 16 64 & # gpu, heads, layers, npos, distract
+# 		run_script $data_size 0 2 1 16 64 &
+# 		wait
 # 		run_script $data_size 0 2 1 16 16 & # run these all in parallel
 # 		run_script $data_size 0 2 1 16 24 & # saturate the GPUs
 # 		wait
 # 		run_script $data_size 0 2 1 16 32 &
 # 		run_script $data_size 0 2 1 16 48 &
 # 		wait
-		run_script $data_size 0 2 1 16 256
+		run_script $data_size 0 2 1 16 96
+		run_script $data_size 0 2 1 16 96
 	fi
 	echo "Finished train data size: $data_size"
 	echo "------------------------"
