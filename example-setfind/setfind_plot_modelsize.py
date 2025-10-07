@@ -50,7 +50,7 @@ fig, axes = plt.subplots(nrows=1, ncols=1, figsize=(20, 12))
 # Function to create a scatter plot for a given heads and layers configuration
 def create_plot(ax, layers, heads, npos, distract, color):
 	# Read the data from the file and store it in a DataFrame
-	data = pd.read_csv(f"vallog_x5_psgd_l{layers}_h{heads}_npos{npos}_width{32+distract}.txt", sep="\t", header=None, names=["data_size", "validation", "train_loss"])
+	data = pd.read_csv(f"vallog_x6_psgd_l{layers}_h{heads}_npos{npos}_width{32+distract}.txt", sep="\t", header=None, names=["data_size", "validation", "train_loss"])
 
 	# remove outliers in the median calc (as you would anyway)
 	filtered_data = data[data["validation"] < 1000]
