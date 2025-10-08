@@ -25,24 +25,30 @@ for data_size in "${data_sizes[@]}"; do
 	echo "Running with data size: $data_size"
 
 	if [ "$NUM_GPUS" -ge 2 ]; then
-		run_script $data_size 1 1 1 16 16 & # gpu,heads,layers,npos,distract
-		run_script $data_size 0 2 1 16 16 &
-
-		run_script $data_size 1 2 2 16 16 & # run these all in parallel
-		run_script $data_size 0 4 2 16 16 & # saturate the GPUs
+# 		run_script $data_size 1 1 1 16 16 & # gpu,heads,layers,npos,distract
+# 		run_script $data_size 0 2 1 16 16 &
+#
+# 		run_script $data_size 1 2 2 16 16 & # run these all in parallel
+# 		run_script $data_size 0 4 2 16 16 & # saturate the GPUs
+# 		wait
+# 		run_script $data_size 1 4 4 16 16 &
+# 		run_script $data_size 0 8 8 16 16 &
+# 		wait
+		run_script $data_size 1 2 4 16 16 &
+		run_script $data_size 0 8 4 16 16 &
 		wait
-		run_script $data_size 1 4 4 16 16 &
-		run_script $data_size 0 8 8 16 16 &
+		run_script $data_size 1 2 8 16 16 &
+		run_script $data_size 0 4 8 16 16 &
 		wait
 	else
-		run_script $data_size 0 1 1 16 16 & # gpu,heads,layers,npos,distract
-		run_script $data_size 0 2 1 16 16 &
-		wait
-		run_script $data_size 0 2 2 16 16 & # run these all in parallel
-		run_script $data_size 0 4 2 16 16 & # saturate the GPUs
-		wait
-		run_script $data_size 0 4 4 16 16
-		run_script $data_size 0 8 8 16 16
+# 		run_script $data_size 0 1 1 16 16 & # gpu,heads,layers,npos,distract
+# 		run_script $data_size 0 2 1 16 16 &
+# 		wait
+# 		run_script $data_size 0 2 2 16 16 & # run these all in parallel
+# 		run_script $data_size 0 4 2 16 16 & # saturate the GPUs
+# 		wait
+# 		run_script $data_size 0 4 4 16 16
+		run_script $data_size 0 16 16 16 16
 	fi
 	echo "Finished train data size: $data_size"
 	echo "------------------------"
