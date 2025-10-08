@@ -48,7 +48,7 @@ for data_size in "${data_sizes[@]}"; do
 # 		run_script $data_size 0 4 2 16 16 & # saturate the GPUs
 # 		wait
 # 		run_script $data_size 0 4 4 16 16
-		run_script $data_size 0 12 12 16 16
+		run_script $data_size 0 16 16 16 16
 	fi
 	echo "Finished train data size: $data_size"
 	echo "------------------------"
